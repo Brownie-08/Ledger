@@ -14,6 +14,17 @@ def _no_fees_by_default(settings):
 
 
 @pytest.fixture(autouse=True)
+def _kyc_off_by_default(settings):
+    """Pre-KYC suites exercise ledger mechanics with large balances; KYC tests opt in via ``kyc_on``."""
+    settings.KYC_ENFORCED = False
+
+
+@pytest.fixture
+def kyc_on(settings):
+    settings.KYC_ENFORCED = True
+
+
+@pytest.fixture(autouse=True)
 def _relaxed_throttles(settings):
     """Throttle tests set their own limits; everyone else shouldn't trip them."""
     from django.core.cache import cache

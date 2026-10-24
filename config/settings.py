@@ -104,6 +104,28 @@ TRANSFER_FEE_BPS = int(os.environ.get("TRANSFER_FEE_BPS", "50"))  # 0.5%
 TRANSFER_FEE_MIN = int(os.environ.get("TRANSFER_FEE_MIN", "0"))
 TRANSFER_FEE_MAX = int(os.environ.get("TRANSFER_FEE_MAX", "0"))
 
+# --- KYC tiers. Amounts in minor units. Tier 0 = signed up, unverified; tier 1 = admin-approved.
+KYC_ENFORCED = os.environ.get("KYC_ENFORCED", "1") == "1"
+KYC_TIERS = {
+    0: {
+        "currencies": ["NGN"],
+        "max_balance": {"NGN": 5_000_000, "USD": 3_500, "GBP": 2_800},  # NGN 50,000 / $35 / GBP 28
+        "daily_outflow": {"NGN": 2_000_000, "USD": 1_400, "GBP": 1_100},  # NGN 20,000 / $14 / GBP 11
+        "withdrawals": False,
+        "fx": False,
+        "virtual_accounts": False,
+    },
+    1: {
+        "currencies": ["NGN", "USD", "GBP"],
+        "max_balance": {"NGN": 1_000_000_000, "USD": 700_000, "GBP": 560_000},  # NGN 10m / $7,000 / GBP 5,600
+        "daily_outflow": {"NGN": 500_000_000, "USD": 350_000, "GBP": 280_000},  # NGN 5m / $3,500 / GBP 2,800
+        "withdrawals": True,
+        "fx": True,
+        "virtual_accounts": True,
+    },
+}
+VIRTUAL_ACCOUNT_SECRET = os.environ.get("VIRTUAL_ACCOUNT_SECRET", "va-dev-secret")
+
 CELERY_BEAT_SCHEDULE = {
     "expire-holds": {"task": "ledger.tasks.expire_holds", "schedule": 60.0},
     "publish-outbox": {"task": "ledger.tasks.publish_outbox", "schedule": 10.0},

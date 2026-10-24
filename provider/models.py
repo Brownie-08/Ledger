@@ -8,13 +8,14 @@ class ProviderTransaction(models.Model):
     class Kind(models.TextChoices):
         CHARGE = "charge"
         PAYOUT = "payout"
+        BANK_TRANSFER = "bank_transfer"
 
     class Status(models.TextChoices):
         PENDING = "pending"
         SUCCEEDED = "succeeded"
         FAILED = "failed"
 
-    kind = models.CharField(max_length=10, choices=Kind.choices)
+    kind = models.CharField(max_length=20, choices=Kind.choices)
     provider_ref = models.CharField(max_length=100, unique=True)
     client_reference = models.CharField(max_length=100, unique=True)
     wallet_id = models.BigIntegerField(null=True, blank=True)

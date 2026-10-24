@@ -4,7 +4,8 @@
     python scripts/demo.py            # needs local Postgres (POSTGRES_* env vars); no Redis/worker needed
 
 Creates a fresh DB (default: ledger_demo), migrates, starts gunicorn with Celery in eager mode, then drives the
-public HTTP API: register -> JWT -> wallets -> provider charge (signed webhook) -> transfer with fee -> FX ->
+public HTTP API: register -> JWT -> tier-0 limits -> KYC review -> virtual accounts -> inbound bank transfer ->
+provider charge (signed webhook) -> transfer with fee -> FX ->
 hold + partial capture -> refund -> failed withdrawal reversal -> reconciliation -> balances that sum to zero.
 """
 
@@ -142,13 +143,89 @@ def run():
     print(f"ada/bob/shop registered; ada's access token: {tok['access'][:24]}… (refresh issued too)")
     print("unauthenticated GET /api/wallets/ ->", requests.get(f"{BASE}/api/wallets/").status_code)
 
-    h("2. Create wallets")
-    a_ngn = ada.post("/api/wallets/", {"currency": "NGN"}, expect=201).json()["id"]
-    a_usd = ada.post("/api/wallets/", {"currency": "USD"}, expect=201).json()["id"]
+    h("2a. Onboarding: instant signup at KYC tier 0")
+    k = ada.get("/api/kyc/").json()
+    lim = k["limits"]
+    print(
+        f"ada: tier {k['tier']}, kyc status '{k['status']}'; tier-0 limits: currencies {lim['currencies']}, "
+        f"max balance {ngn(lim['max_balance']['NGN'])}, daily outflow {ngn(lim['daily_outflow']['NGN'])}, "
+        f"withdrawals={lim['withdrawals']}, fx={lim['fx']}, virtual_accounts={lim['virtual_accounts']}"
+    )
+    a_ngn_w = ada.post("/api/wallets/", {"currency": "NGN"}, expect=201).json()
+    a_ngn = a_ngn_w["id"]
     b_ngn = bob.post("/api/wallets/", {"currency": "NGN"}, expect=201).json()["id"]
     s_ngn = shop.post("/api/wallets/", {"currency": "NGN"}, expect=201).json()["id"]
-    print(f"ada NGN #{a_ngn}, ada USD #{a_usd}, bob NGN #{b_ngn}, shop NGN #{s_ngn}")
-    print("bob reading ada's wallet ->", bob.get(f"/api/wallets/{a_ngn}/").status_code, "(hidden)")
+    print(f"ada NGN wallet #{a_ngn} opened (virtual_account={a_ngn_w['virtual_account']}); bob #{b_ngn}, shop #{s_ngn}")
+    r = ada.post("/api/wallets/", {"currency": "USD"})
+    print(f"ada opening a USD wallet at tier 0 -> {r.status_code} {r.json()['error']}")
+    Api().post("/provider/charges/", {"wallet_id": a_ngn, "amount": 40_000_00, "currency": "NGN"}, idem=False)
+    print(f"ada tops up {ngn(40_000_00)} by card -> balance {ngn(bal(ada, a_ngn)['balance'])}")
+    r = ada.post("/api/transfers/", {"source_wallet": a_ngn, "destination_wallet": b_ngn, "amount": 25_000_00})
+    print(f"ada sends bob {ngn(25_000_00)} -> {r.status_code} {r.json()['error']}: {r.json()['detail']}")
+    r = ada.post(f"/api/wallets/{a_ngn}/withdrawals/", {"amount": 1_000_00, "bank_account": "0123456789"})
+    print(f"ada withdraws {ngn(1_000_00)} to her bank -> {r.status_code} {r.json()['error']}")
+    r = ada.post("/api/transfers/", {"source_wallet": a_ngn, "destination_wallet": b_ngn, "amount": 15_000_00})
+    print(f"ada sends bob {ngn(15_000_00)} (within the daily limit) -> {r.status_code}")
+
+    h("2b. Submit KYC -> admin review queue -> approve / reject")
+    kyc_ada = {"full_name": "Ada Obi", "date_of_birth": "1995-04-12", "country": "NG", "id_type": "BVN"}
+    r = ada.post("/api/kyc/", {**kyc_ada, "id_number": "22212345678"}, idem=False, expect=201).json()
+    print(f"ada submits KYC (mock BVN) -> status '{r['status']}', id_number shown as {r['id_number']}")
+    bob.post(
+        "/api/kyc/",
+        {"full_name": "Bob Ade", "date_of_birth": "1990-01-30", "country": "NG", "id_type": "NIN", "id_number": "1"},
+        idem=False,
+    )
+    print("bob submits a malformed NIN -> 400 (validation); resubmits correctly")
+    kyc_bob = {"full_name": "Bob Ade", "date_of_birth": "1990-01-30", "country": "NG", "id_type": "NIN"}
+    bob.post("/api/kyc/", {**kyc_bob, "id_number": "12345678901"}, idem=False, expect=201)
+    kyc_shop = {"full_name": "Shop Ltd Director", "date_of_birth": "1985-07-07", "country": "GB"}
+    shop_kyc = shop.post(
+        "/api/kyc/", {**kyc_shop, "id_type": "PASSPORT", "id_number": "123456789"}, idem=False, expect=201
+    ).json()
+    print("ada trying to view the admin queue ->", ada.get("/api/admin/kyc/").status_code)
+    queue = ops.get("/api/admin/kyc/").json()["results"]
+    print("ops review queue (pending):", ", ".join(f"#{p['id']} {p['username']} ({p['id_type']})" for p in queue))
+    rej = ops.post(
+        f"/api/admin/kyc/{shop_kyc['id']}/reject/", {"reason": "passport photo unreadable"}, idem=False, expect=200
+    ).json()
+    print(f"ops rejects shop -> status '{rej['status']}', reason: {rej['rejection_reason']!r}")
+    shop.post("/api/kyc/", {**kyc_shop, "id_type": "PASSPORT", "id_number": "123456789"}, idem=False, expect=201)
+    print("shop sees the reason and resubmits -> pending again")
+    for p in ops.get("/api/admin/kyc/").json()["results"]:
+        a = ops.post(f"/api/admin/kyc/{p['id']}/approve/", idem=False, expect=200).json()
+        print(f"ops approves #{a['id']} {a['username']} -> tier {a['tier']} (reviewer {a['reviewer']})")
+
+    h("2c. Virtual accounts: backfilled on approval, issued on new wallets")
+    va = bal(ada, a_ngn)["virtual_account"]
+    print(f"ada NGN #{a_ngn}: {va['bank_name']} · NUBAN {va['account_number']} · name {va['account_name']!r} (mock)")
+    a_usd_w = ada.post("/api/wallets/", {"currency": "USD"}, expect=201).json()
+    a_usd = a_usd_w["id"]
+    vu = a_usd_w["virtual_account"]
+    print(
+        f"ada USD #{a_usd}: {vu['bank_name']} · routing {vu['routing_number']} · account {vu['account_number']} (mock)"
+    )
+
+    h("2d. Inbound bank transfer to the virtual account (signed webhook)")
+    r = (
+        Api()
+        .post(
+            "/provider/bank-transfers/",
+            {
+                "account_number": va["account_number"],
+                "amount": 250_000_00,
+                "currency": "NGN",
+                "sender_name": "Mama Ada",
+            },
+            idem=False,
+            expect=201,
+        )
+        .json()
+    )
+    print(
+        f"provider: bank transfer {r['provider_ref']} {ngn(r['amount'])} to {r['account_number']} -> "
+        f"bank_transfer.received webhook -> ada NGN balance {ngn(bal(ada, a_ngn)['balance'])}"
+    )
 
     h("3. Deposit via provider checkout -> HMAC-signed webhook")
     for who, wid, amt in [("ada", a_ngn, 1_000_000_00), ("bob", b_ngn, 50_000_00)]:
@@ -273,6 +350,25 @@ def run():
     print("ada calling admin endpoint ->", ada.post("/api/admin/reconciliation/").status_code)
     rep = ops.post("/api/admin/reconciliation/", expect=201).json()
     print(f"report #{rep['id']}: status={rep['status'].upper()} summary={json.dumps(rep['summary'])}")
+
+    h("8b. Bank transfer to an unknown account number -> suspense, flagged by reconciliation")
+    r = (
+        Api()
+        .post(
+            "/provider/bank-transfers/",
+            {"account_number": "9999999999", "amount": 7_500_00, "currency": "NGN", "sender_name": "Typo Sender"},
+            idem=False,
+            expect=201,
+        )
+        .json()
+    )
+    rep = ops.post("/api/admin/reconciliation/", expect=201).json()
+    m = rep["mismatches"][0]
+    print(f"{ngn(7_500_00)} to 9999999999 accepted by the bank -> parked in NGN suspense (no wallet credited)")
+    print(
+        f"report #{rep['id']}: status={rep['status'].upper()} counts={rep['summary']['mismatch_counts']} "
+        f"-> {m['kind']} {m['provider_ref']} {ngn(m['amount'])} reason={m['reason']}"
+    )
 
     h("9. Every account + per-currency zero-sum check")
     from django.db.models import Sum

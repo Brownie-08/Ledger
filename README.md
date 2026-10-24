@@ -6,7 +6,7 @@ a mock payment provider with HMAC-signed webhooks, withdrawals settled through a
 reconciliation, JWT auth with per-user ownership, throttling, an audit trail, and full observability
 (JSON logs with request ids, Prometheus metrics, optional OpenTelemetry tracing, OpenAPI docs).
 
-**91 tests · 94% coverage** (app code, excluding tests and migrations) · **143 req/s, 0 failures, zero drift** under load
+**117 tests · 95% coverage** (app code, excluding tests and migrations) · **143 req/s, 0 failures, zero drift** under load
 (see [Load test](#load-test)).
 
 ## Features
@@ -107,6 +107,52 @@ The full schema is in [`openapi.yaml`](openapi.yaml), and Swagger UI is served a
 Errors: `422 {"error": "insufficient_funds" | "currency_mismatch" | "not_refundable" | "hold_not_active" | …}`,
 `409 wallet_exists`, `400 invalid_signature`, `429` when throttled.
 
+## Onboarding & KYC (tiered)
+
+Signup is **instant**. Every new user starts at **tier 0** and can use the product straight away within small limits.
+Submitting KYC puts the user in an admin review queue. **Approval raises them to tier 1** and issues virtual bank accounts.
+
+| | Tier 0 (no KYC) | Tier 1 (KYC approved) |
+|---|---|---|
+| Wallet currencies | NGN only | NGN, USD, GBP |
+| Max balance per wallet | ₦50,000 · $35 · £28 | ₦10,000,000 · $7,000 · £5,600 |
+| Daily outflow (transfers, FX, captures, withdrawals) | ₦20,000 · $14 · £11 | ₦5,000,000 · $3,500 · £2,800 |
+| Withdrawals / FX / virtual accounts | ✗ / ✗ / ✗ | ✓ / ✓ / ✓ |
+
+Limits live in `settings.KYC_TIERS` and are enforced inside `post_transaction`, while the account rows are locked, so no
+API path can bypass them. Refunds and reversals are exempt from the balance cap. Errors: `403 kyc_required` (capability
+or currency not allowed for the tier) and `422 limit_exceeded`. Set `KYC_ENFORCED=0` to switch enforcement off.
+
+| Endpoint | Who | |
+|---|---|---|
+| `GET /api/kyc/` | user | tier, status, limits, rejection reason (ID number masked) |
+| `POST /api/kyc/` | user | submit or resubmit `full_name, date_of_birth, country, id_type (BVN/NIN/PASSPORT…), id_number` → `pending` |
+| `GET /api/admin/kyc/?status=pending` | staff | review queue, cursor-paginated (`approved`, `rejected`, `none`, `all` also accepted) |
+| `POST /api/admin/kyc/{id}/approve/` | staff | tier 1, backfill virtual accounts, audit + outbox `kyc.approved` |
+| `POST /api/admin/kyc/{id}/reject/` `{reason}` | staff | audit + outbox `kyc.rejected`; the user sees the reason and can resubmit |
+
+**Virtual accounts (mock).** Each tier-1 wallet gets one receiving account, shown in wallet responses as `virtual_account`:
+NGN gets a 10-digit NUBAN at "Ledger MFB (mock)" with a valid CBN check digit; GBP gets sort code `99-00-01` plus 8 digits;
+USD gets ABA routing number `999000014` plus a 12-digit account number. Numbers are derived from an HMAC of the wallet id, so
+they are deterministic, and they are collision-checked under a unique constraint with retries. They are **not real bank accounts**.
+
+**Inbound bank transfers.** The mock provider (`POST /provider/bank-transfers/`) sends a signed `bank_transfer.received` webhook.
+The API credits the wallet that owns the account number (type `bank_transfer_in`, deduped on `banktx:<ref>`). Money for an
+unknown account, a currency mismatch or a tier-limit breach is accepted but **parked in suspense** (`inbound_unallocated`).
+Reconciliation reports it as an `unallocated_inbound` mismatch so ops can follow up.
+
+### Why tiered onboarding instead of manual approval of every signup
+
+- **No friction at signup.** Users who wait days for an admin before they can do anything mostly never come back. Tier 0
+  lets them try the product right away.
+- **Risk follows exposure.** With small caps, NGN only, no withdrawals and no FX, an unverified account can't be used to
+  move meaningful money. Checks are concentrated where the risk is.
+- **Mirrors real regulation.** The CBN's tiered KYC for Nigerian wallets and the "simplified due diligence" thresholds
+  elsewhere work the same way: identity checks scale with limits.
+- **Ops time goes where it matters.** Admins review only the users who want higher limits, in a single queue with
+  audit trails and events, not every signup.
+- **Enforced in one place.** Limits are applied in the posting layer, so new endpoints inherit them automatically.
+
 ## Running it
 
 ### With Docker
@@ -173,12 +219,12 @@ curl -s localhost:8000/api/wallets/1/ -H "Authorization: Bearer $TOKEN"
 ## Tests
 
 ```bash
-pytest                         # 91 tests, real PostgreSQL (uses config.settings_test: Celery eager)
+pytest                         # 117 tests, real PostgreSQL (uses config.settings_test: Celery eager)
 pytest --cov                   # coverage (see .coveragerc)
 ruff check . && ruff format --check .
 ```
 
-Latest run: **91 passed in ~11s, 94% coverage** (1,215 statements, 73 missed).
+Latest run: **117 passed in ~15s, 95% coverage** (1,590 statements, 82 missed).
 
 | File | Covers |
 |---|---|
@@ -196,8 +242,8 @@ and OpenAPI validation with `--fail-on-warn`. It uploads coverage.xml and openap
 ## Load test
 
 ```bash
-# terminal 1: server with throttles raised
-CELERY_EAGER=1 THROTTLE_ANON=100000/min THROTTLE_USER=100000/min THROTTLE_MONEY=100000/min \
+# terminal 1: server with throttles raised (KYC off: the load test seeds ₦500k per user, above the tier-0 cap)
+KYC_ENFORCED=0 CELERY_EAGER=1 THROTTLE_ANON=100000/min THROTTLE_USER=100000/min THROTTLE_MONEY=100000/min \
   gunicorn config.wsgi:application -w 1 --threads 16 -b 127.0.0.1:8000
 # terminal 2
 make loadtest            # locust: 50 users, ramp 10/s, 60s, headless
@@ -222,6 +268,9 @@ scripts/demo.py  end-to-end demo on a fresh DB
 
 ## Known limitations
 
+- KYC and bank accounts are mocks: there are no real BVN/NIN lookups or document uploads, and the virtual account numbers are fake.
+- Money parked in suspense (unknown virtual account) has no admin reallocation endpoint yet. It is only flagged by reconciliation.
+- Holds are checked against the daily outflow limit at capture, not when they are placed.
 - FX rates are a fixed seeded table. A real system would snapshot live quotes and manage FX-desk P&L.
 - The provider is in-process (same DB) for convenience. It talks to the API only over HTTP webhooks.
 - Locmem is the default cache for throttles. Set `USE_REDIS_CACHE=1` (as docker-compose and fly.toml do) to share limits across processes.

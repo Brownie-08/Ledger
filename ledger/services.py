@@ -40,6 +40,19 @@ class NotRefundable(LedgerError):
     code = "not_refundable"
 
 
+class KycRequired(LedgerError):
+    """The owner's KYC tier doesn't allow this operation (currency, withdrawal, FX, ...)."""
+
+    code = "kyc_required"
+    http_status = 403
+
+
+class LimitExceeded(LedgerError):
+    """A tier limit (max balance / daily outflow) would be breached."""
+
+    code = "limit_exceeded"
+
+
 @dataclass(frozen=True)
 class EntrySpec:
     account_id: int
@@ -84,6 +97,10 @@ def post_transaction(entries, idempotency_key, *, type="generic", reference="", 
                 # Available = balance - active holds; only debits are checked.
                 if acc.type == Account.Type.USER_WALLET and delta < 0 and acc.balance - acc.held_amount + delta < 0:
                     raise InsufficientFunds(f"Account {acc_id} has insufficient funds")
+            # Tier limits are enforced here, under the row locks, so no code path can bypass them.
+            from .kyc import enforce_tier_limits
+
+            enforce_tier_limits(accounts, deltas, type)
 
             txn = Transaction.objects.create(
                 type=type,

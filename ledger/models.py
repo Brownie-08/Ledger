@@ -225,3 +225,56 @@ class ReconciliationReport(models.Model):
     finished_at = models.DateTimeField()
     summary = models.JSONField(default=dict)
     mismatches = models.JSONField(default=list)
+
+
+class KYCProfile(models.Model):
+    """Risk-based onboarding: signup is instant at tier 0; an admin review lifts the user to tier 1."""
+
+    class Status(models.TextChoices):
+        NONE = "none"
+        PENDING = "pending"
+        APPROVED = "approved"
+        REJECTED = "rejected"
+
+    class IdType(models.TextChoices):
+        BVN = "BVN"
+        NIN = "NIN"
+        PASSPORT = "PASSPORT"
+
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="kyc")
+    tier = models.PositiveSmallIntegerField(default=0)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.NONE)
+    full_name = models.CharField(max_length=200, blank=True, default="")
+    date_of_birth = models.DateField(null=True, blank=True)
+    country = models.CharField(max_length=2, blank=True, default="")
+    id_type = models.CharField(max_length=10, choices=IdType.choices, blank=True, default="")
+    id_number = models.CharField(max_length=20, blank=True, default="")  # mock data only
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    reviewer = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="kyc_reviews"
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.CharField(max_length=255, blank=True, default="")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["status", "submitted_at"])]
+
+
+class VirtualAccount(models.Model):
+    """MOCK bank details that route inbound bank transfers to one wallet. Not real accounts."""
+
+    class Scheme(models.TextChoices):
+        NUBAN = "nuban"  # NGN: 10-digit NUBAN
+        SORT_CODE = "sort_code"  # GBP: 6-digit sort code + 8-digit account
+        ABA = "aba"  # USD: 9-digit routing number + account number
+
+    wallet = models.OneToOneField(Account, on_delete=models.PROTECT, related_name="virtual_account")
+    scheme = models.CharField(max_length=10, choices=Scheme.choices)
+    currency = models.CharField(max_length=3, choices=Currency.choices)
+    bank_name = models.CharField(max_length=100)
+    account_number = models.CharField(max_length=17, unique=True)
+    sort_code = models.CharField(max_length=6, blank=True, default="")
+    routing_number = models.CharField(max_length=9, blank=True, default="")
+    account_name = models.CharField(max_length=200, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)

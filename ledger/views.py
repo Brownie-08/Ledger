@@ -2,7 +2,7 @@ import logging
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError
 from django.http import Http404
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
@@ -12,11 +12,11 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from . import holds, services, signing, webhooks, withdrawals
+from . import holds, kyc, services, signing, webhooks, withdrawals
 from .audit import audit
 from .idempotency import idempotent
 from .metrics import WEBHOOKS
-from .models import Account, AuditLog, Entry, FxRate, Hold, ReconciliationReport, Transaction, Withdrawal
+from .models import Account, AuditLog, Entry, FxRate, Hold, KYCProfile, ReconciliationReport, Transaction, Withdrawal
 from .permissions import IsStaff, owns
 from .reconciliation import run_reconciliation
 from .serializers import (
@@ -27,6 +27,9 @@ from .serializers import (
     FxRateSerializer,
     HoldCreateSerializer,
     HoldSerializer,
+    KYCProfileSerializer,
+    KYCRejectSerializer,
+    KYCSubmitSerializer,
     ReconciliationReportSerializer,
     RefundSerializer,
     RegisterSerializer,
@@ -69,7 +72,7 @@ TXN_SCHEMA = inline_serializer(
 
 
 def ledger_error(exc):
-    code = status.HTTP_422_UNPROCESSABLE_ENTITY
+    code = getattr(exc, "http_status", status.HTTP_422_UNPROCESSABLE_ENTITY)
     return Response({"error": exc.code, "detail": str(exc)}, status=code)
 
 
@@ -115,6 +118,7 @@ class Register(APIView):
         s = RegisterSerializer(data=request.data)
         s.is_valid(raise_exception=True)
         user = get_user_model().objects.create_user(**s.validated_data)
+        kyc.profile_for(user)  # instant signup at tier 0
         return Response({"id": user.id, "username": user.username}, status=201)
 
 
@@ -137,10 +141,11 @@ class WalletListCreate(APIView):
         elif request.user.is_staff and s.validated_data.get("username"):
             owner, _ = get_user_model().objects.get_or_create(username=s.validated_data["username"])
         try:
-            with transaction.atomic():
-                wallet = Account.objects.create(owner=owner, currency=s.validated_data["currency"])
+            wallet = kyc.open_wallet(owner, s.validated_data["currency"])
         except IntegrityError:
             return Response({"error": "wallet_exists"}, status=409)
+        except services.LedgerError as exc:
+            return ledger_error(exc)
         return Response(WalletSerializer(wallet).data, status=201)
 
 
@@ -193,6 +198,10 @@ class HistoryPagination(CursorPagination):
     page_size = 20
     page_size_query_param = "page_size"
     max_page_size = 100
+
+
+class QueuePagination(HistoryPagination):
+    ordering = "id"  # review queue: oldest first
 
 
 class WalletHistory(generics.ListAPIView):
@@ -414,3 +423,66 @@ class AuditLogList(generics.ListAPIView):
         if action := self.request.query_params.get("action"):
             qs = qs.filter(action=action)
         return qs
+
+
+class KYCMe(APIView):
+    """The caller's own KYC status/limits (GET) and submission or resubmission after a rejection (POST)."""
+
+    @extend_schema(responses=KYCProfileSerializer)
+    def get(self, request):
+        return Response(KYCProfileSerializer(kyc.profile_for(request.user)).data)
+
+    @extend_schema(request=KYCSubmitSerializer, responses=KYCProfileSerializer)
+    def post(self, request):
+        s = KYCSubmitSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+        try:
+            profile = kyc.submit(request.user, s.validated_data, request=request)
+        except services.LedgerError as exc:
+            return ledger_error(exc)
+        return Response(KYCProfileSerializer(profile).data, status=201)
+
+
+class KYCAdminList(generics.ListAPIView):
+    """Review queue. ``?status=pending`` (default), ``approved``, ``rejected``, ``none`` or ``all``."""
+
+    permission_classes = [IsStaff]
+    serializer_class = KYCProfileSerializer
+    pagination_class = QueuePagination
+
+    @extend_schema(parameters=[OpenApiParameter("status", str, OpenApiParameter.QUERY, required=False)])
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
+
+    def get_queryset(self):
+        qs = KYCProfile.objects.select_related("user", "reviewer")
+        st = self.request.query_params.get("status", "pending")
+        return qs if st == "all" else qs.filter(status=st)
+
+
+class KYCApprove(APIView):
+    permission_classes = [IsStaff]
+
+    @extend_schema(request=None, responses=KYCProfileSerializer)
+    def post(self, request, pk):
+        get_object_or_404(KYCProfile, pk=pk)
+        try:
+            profile = kyc.approve(pk, request.user, request=request)
+        except services.LedgerError as exc:
+            return ledger_error(exc)
+        return Response(KYCProfileSerializer(profile).data)
+
+
+class KYCReject(APIView):
+    permission_classes = [IsStaff]
+
+    @extend_schema(request=KYCRejectSerializer, responses=KYCProfileSerializer)
+    def post(self, request, pk):
+        get_object_or_404(KYCProfile, pk=pk)
+        s = KYCRejectSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+        try:
+            profile = kyc.reject(pk, request.user, s.validated_data["reason"], request=request)
+        except services.LedgerError as exc:
+            return ledger_error(exc)
+        return Response(KYCProfileSerializer(profile).data)

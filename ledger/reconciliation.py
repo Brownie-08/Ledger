@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 
-from django.db.models import Sum
+from django.db.models import Q, Sum
 from django.utils import timezone
 
 from provider.models import ProviderTransaction
@@ -10,14 +10,42 @@ from provider.models import ProviderTransaction
 from .metrics import RECONCILIATION_MISMATCHES
 from .models import Account, Entry, ReconciliationReport, Transaction, Withdrawal
 
+INBOUND_TYPES = ("deposit", "bank_transfer_in", "inbound_unallocated")
+
 
 def _ledger_deposits():
-    """provider_ref -> credited amount for every provider-originated deposit in the ledger."""
+    """provider_ref -> credited amount for every provider-originated inbound (card charge or bank transfer).
+
+    Counts money credited to a wallet *or* parked in suspense: both mean the ledger booked it.
+    """
     out = {}
-    for txn in Transaction.objects.filter(type="deposit", idempotency_key__startswith="charge:"):
+    qs = Transaction.objects.filter(
+        Q(idempotency_key__startswith="charge:") | Q(idempotency_key__startswith="banktx:"),
+        type__in=INBOUND_TYPES,
+    )
+    for txn in qs:
         ref = txn.idempotency_key.split(":", 1)[1]
-        out[ref] = sum(txn.entries.filter(account__type=Account.Type.USER_WALLET).values_list("amount", flat=True))
+        out[ref] = sum(
+            txn.entries.filter(
+                account__type__in=[Account.Type.USER_WALLET, Account.Type.SUSPENSE], amount__gt=0
+            ).values_list("amount", flat=True)
+        )
     return out
+
+
+def unallocated_inbound():
+    """Inbound money sitting in suspense (unknown account, limit breach) needs an ops decision."""
+    return [
+        {
+            "kind": "unallocated_inbound",
+            "transaction_id": t.id,
+            "provider_ref": t.metadata.get("provider_ref"),
+            "amount": t.metadata.get("amount"),
+            "reason": t.metadata.get("reason"),
+            "account_number": t.metadata.get("account_number"),
+        }
+        for t in Transaction.objects.filter(type="inbound_unallocated", status=Transaction.Status.POSTED)
+    ]
 
 
 def integrity_issues():
@@ -42,7 +70,9 @@ def run_reconciliation():
     ledger = _ledger_deposits()
     provider_charges = {
         p.provider_ref: p
-        for p in ProviderTransaction.objects.filter(kind="charge", status=ProviderTransaction.Status.SUCCEEDED)
+        for p in ProviderTransaction.objects.filter(
+            kind__in=["charge", "bank_transfer"], status=ProviderTransaction.Status.SUCCEEDED
+        )
     }
     for ref, p in provider_charges.items():
         if ref not in ledger:
@@ -75,7 +105,11 @@ def run_reconciliation():
                 {"kind": "payout_status_mismatch", "withdrawal_id": wd.id, "provider": p.status, "ledger": wd.status}
             )
 
-    # 3) Internal integrity
+    # 3) Inbound money we couldn't route to a wallet
+    unallocated = unallocated_inbound()
+    mismatches += unallocated
+
+    # 4) Internal integrity
     mismatches += integrity_issues()
 
     counts = defaultdict(int)
@@ -90,6 +124,7 @@ def run_reconciliation():
             "provider_charges": len(provider_charges),
             "ledger_provider_deposits": len(ledger),
             "withdrawals": Withdrawal.objects.count(),
+            "unallocated_inbound": len(unallocated),
             "accounts": Account.objects.count(),
             "mismatch_counts": dict(counts),
         },

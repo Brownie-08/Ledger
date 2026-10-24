@@ -91,3 +91,33 @@ def create_payout(*, reference, withdrawal_id, amount, currency, bank_account):
                 _emit("payout.succeeded", data)
             txn.save()
     return txn.provider_ref
+
+
+def simulate_bank_transfer(*, account_number, amount, currency, sender_name="", client_reference=None):
+    """Someone paid into one of our (mock) virtual account numbers at the bank; we get notified."""
+    _maybe_fail()
+    client_reference = client_reference or f"bt-{uuid.uuid4().hex[:12]}"
+    with transaction.atomic():
+        txn, created = ProviderTransaction.objects.get_or_create(
+            client_reference=client_reference,
+            defaults={
+                "kind": ProviderTransaction.Kind.BANK_TRANSFER,
+                "provider_ref": f"bt_{uuid.uuid4().hex[:16]}",
+                "amount": amount,
+                "currency": currency,
+                "bank_account": account_number,
+                "status": ProviderTransaction.Status.SUCCEEDED,
+            },
+        )
+        if created:
+            _emit(
+                "bank_transfer.received",
+                {
+                    "provider_ref": txn.provider_ref,
+                    "account_number": account_number,
+                    "amount": amount,
+                    "currency": currency,
+                    "sender_name": sender_name,
+                },
+            )
+    return txn

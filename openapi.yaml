@@ -33,6 +33,91 @@ paths:
               schema:
                 $ref: '#/components/schemas/PaginatedAuditLogList'
           description: ''
+  /api/admin/kyc/:
+    get:
+      operationId: api_admin_kyc_list
+      description: Review queue. ``?status=pending`` (default), ``approved``, ``rejected``,
+        ``none`` or ``all``.
+      parameters:
+      - name: cursor
+        required: false
+        in: query
+        description: The pagination cursor value.
+        schema:
+          type: string
+      - name: page_size
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      - in: query
+        name: status
+        schema:
+          type: string
+      tags:
+      - api
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedKYCProfileList'
+          description: ''
+  /api/admin/kyc/{id}/approve/:
+    post:
+      operationId: api_admin_kyc_approve_create
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - api
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KYCProfile'
+          description: ''
+  /api/admin/kyc/{id}/reject/:
+    post:
+      operationId: api_admin_kyc_reject_create
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KYCRejectRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/KYCRejectRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/KYCRejectRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KYCProfile'
+          description: ''
   /api/admin/reconciliation/:
     get:
       operationId: api_admin_reconciliation_list
@@ -276,6 +361,49 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Hold'
+          description: ''
+  /api/kyc/:
+    get:
+      operationId: api_kyc_retrieve
+      description: The caller's own KYC status/limits (GET) and submission or resubmission
+        after a rejection (POST).
+      tags:
+      - api
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KYCProfile'
+          description: ''
+    post:
+      operationId: api_kyc_create
+      description: The caller's own KYC status/limits (GET) and submission or resubmission
+        after a rejection (POST).
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KYCSubmitRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/KYCSubmitRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/KYCSubmitRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KYCProfile'
           description: ''
   /api/transactions/{id}/refund/:
     post:
@@ -659,6 +787,32 @@ paths:
               schema:
                 $ref: '#/components/schemas/Withdrawal'
           description: ''
+  /provider/bank-transfers/:
+    post:
+      operationId: provider_bank_transfers_create
+      description: Pretend someone sent a bank transfer to a virtual account number
+        (mock provider, no JWT).
+      tags:
+      - provider
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BankTransferRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/BankTransferRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/BankTransferRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderBankTransfer'
+          description: ''
   /provider/charges/:
     post:
       operationId: provider_charges_create
@@ -725,22 +879,34 @@ components:
       - action
       - created_at
       - id
+    BankTransferRequest:
+      type: object
+      properties:
+        account_number:
+          type: string
+          minLength: 1
+          maxLength: 17
+        amount:
+          type: integer
+          minimum: 1
+        currency:
+          $ref: '#/components/schemas/CurrencyEnum'
+        sender_name:
+          type: string
+          default: ''
+        client_reference:
+          type: string
+          minLength: 1
+      required:
+      - account_number
+      - amount
+      - currency
     CaptureRequest:
       type: object
       properties:
         amount:
           type: integer
           minimum: 1
-    ChargeCurrencyEnum:
-      enum:
-      - NGN
-      - USD
-      - GBP
-      type: string
-      description: |-
-        * `NGN` - NGN
-        * `USD` - USD
-        * `GBP` - GBP
     ChargeRequest:
       type: object
       properties:
@@ -750,7 +916,7 @@ components:
           type: integer
           minimum: 1
         currency:
-          $ref: '#/components/schemas/ChargeCurrencyEnum'
+          $ref: '#/components/schemas/CurrencyEnum'
         client_reference:
           type: string
           minLength: 1
@@ -909,6 +1075,138 @@ components:
         * `captured` - Captured
         * `released` - Released
         * `expired` - Expired
+    IdTypeEnum:
+      enum:
+      - BVN
+      - NIN
+      - PASSPORT
+      type: string
+      description: |-
+        * `BVN` - Bvn
+        * `NIN` - Nin
+        * `PASSPORT` - Passport
+    KYCProfile:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        user:
+          type: integer
+          readOnly: true
+        username:
+          type: string
+          readOnly: true
+        tier:
+          type: integer
+          readOnly: true
+        status:
+          allOf:
+          - $ref: '#/components/schemas/KYCProfileStatusEnum'
+          readOnly: true
+        full_name:
+          type: string
+          readOnly: true
+        date_of_birth:
+          type: string
+          format: date
+          readOnly: true
+          nullable: true
+        country:
+          type: string
+          readOnly: true
+        id_type:
+          allOf:
+          - $ref: '#/components/schemas/IdTypeEnum'
+          readOnly: true
+        id_number:
+          type: string
+          readOnly: true
+        submitted_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        reviewer:
+          type: string
+          readOnly: true
+        reviewed_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        rejection_reason:
+          type: string
+          readOnly: true
+        limits:
+          type: object
+          additionalProperties: {}
+          readOnly: true
+      required:
+      - country
+      - date_of_birth
+      - full_name
+      - id
+      - id_number
+      - id_type
+      - limits
+      - rejection_reason
+      - reviewed_at
+      - reviewer
+      - status
+      - submitted_at
+      - tier
+      - user
+      - username
+    KYCProfileStatusEnum:
+      enum:
+      - none
+      - pending
+      - approved
+      - rejected
+      type: string
+      description: |-
+        * `none` - None
+        * `pending` - Pending
+        * `approved` - Approved
+        * `rejected` - Rejected
+    KYCRejectRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          minLength: 3
+          maxLength: 255
+      required:
+      - reason
+    KYCSubmitRequest:
+      type: object
+      properties:
+        full_name:
+          type: string
+          minLength: 3
+          maxLength: 200
+        date_of_birth:
+          type: string
+          format: date
+        country:
+          type: string
+          minLength: 1
+          description: ISO 3166-1 alpha-2, e.g. NG, GB, US
+          pattern: ^[A-Z]{2}$
+        id_type:
+          $ref: '#/components/schemas/IdTypeEnum'
+        id_number:
+          type: string
+          minLength: 1
+          description: 'MOCK data only. BVN/NIN: 11 digits; passport: 6-9 chars'
+          maxLength: 20
+      required:
+      - country
+      - date_of_birth
+      - full_name
+      - id_number
+      - id_type
     PaginatedAuditLogList:
       type: object
       required:
@@ -947,6 +1245,25 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Entry'
+    PaginatedKYCProfileList:
+      type: object
+      required:
+      - results
+      properties:
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?cursor=cD00ODY%3D"
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?cursor=cj0xJnA9NDg3
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/KYCProfile'
     PaginatedReconciliationReportList:
       type: object
       required:
@@ -1001,6 +1318,25 @@ components:
       - status
       - transaction_id
       - type
+    ProviderBankTransfer:
+      type: object
+      properties:
+        provider_ref:
+          type: string
+        status:
+          type: string
+        account_number:
+          type: string
+        amount:
+          type: integer
+        currency:
+          type: string
+      required:
+      - account_number
+      - amount
+      - currency
+      - provider_ref
+      - status
     ProviderCharge:
       type: object
       properties:
@@ -1103,6 +1439,16 @@ components:
         reason:
           type: string
           default: ''
+    SchemeEnum:
+      enum:
+      - nuban
+      - sort_code
+      - aba
+      type: string
+      description: |-
+        * `nuban` - Nuban
+        * `sort_code` - Sort Code
+        * `aba` - Aba
     TokenObtainPair:
       type: object
       properties:
@@ -1177,6 +1523,44 @@ components:
         * `fees` - Fees
         * `suspense` - Suspense
         * `fx` - Fx
+    VirtualAccount:
+      type: object
+      properties:
+        scheme:
+          allOf:
+          - $ref: '#/components/schemas/SchemeEnum'
+          readOnly: true
+        currency:
+          allOf:
+          - $ref: '#/components/schemas/CurrencyEnum'
+          readOnly: true
+        bank_name:
+          type: string
+          readOnly: true
+        account_number:
+          type: string
+          readOnly: true
+        sort_code:
+          type: string
+          readOnly: true
+        routing_number:
+          type: string
+          readOnly: true
+        account_name:
+          type: string
+          readOnly: true
+        mock:
+          type: boolean
+          readOnly: true
+      required:
+      - account_name
+      - account_number
+      - bank_name
+      - currency
+      - mock
+      - routing_number
+      - scheme
+      - sort_code
     Wallet:
       type: object
       properties:
@@ -1208,6 +1592,11 @@ components:
         version:
           type: integer
           readOnly: true
+        virtual_account:
+          allOf:
+          - $ref: '#/components/schemas/VirtualAccount'
+          nullable: true
+          readOnly: true
         created_at:
           type: string
           format: date-time
@@ -1222,6 +1611,7 @@ components:
       - owner
       - type
       - version
+      - virtual_account
     WalletCreateRequest:
       type: object
       properties:
