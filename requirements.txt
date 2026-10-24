@@ -7,6 +7,7 @@ celery>=5.4
 redis>=5.0
 requests>=2.31
 gunicorn>=23
+whitenoise>=6.6
 prometheus-client>=0.20
 opentelemetry-sdk>=1.25
 opentelemetry-instrumentation-django>=0.46b0
