@@ -6,15 +6,17 @@ from rest_framework.pagination import CursorPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from . import services
+from . import services, signing, webhooks, withdrawals
 from .idempotency import idempotent
-from .models import Account, Entry
+from .models import Account, Entry, Withdrawal
 from .serializers import (
     DepositSerializer,
     EntrySerializer,
     TransferSerializer,
     WalletCreateSerializer,
     WalletSerializer,
+    WithdrawalCreateSerializer,
+    WithdrawalSerializer,
 )
 
 
@@ -99,3 +101,48 @@ class WalletHistory(generics.ListAPIView):
     def get_queryset(self):
         get_object_or_404(Account, pk=self.kwargs["pk"], type=Account.Type.USER_WALLET)
         return Entry.objects.filter(account_id=self.kwargs["pk"]).select_related("transaction")
+
+
+class ProviderWebhook(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def post(self, request):
+        from django.conf import settings
+
+        raw = request.body
+        try:
+            signing.verify(
+                raw,
+                request.headers.get(signing.HEADER),
+                settings.PROVIDER_WEBHOOK_SECRET,
+                settings.PROVIDER_WEBHOOK_TOLERANCE_SECONDS,
+            )
+        except signing.InvalidSignature as exc:
+            return Response({"error": "invalid_signature", "detail": str(exc)}, status=400)
+        try:
+            result = webhooks.process_event(request.data)
+        except webhooks.UnknownEvent:
+            return Response({"error": "unknown_event"}, status=400)
+        return Response({"status": result})
+
+
+class WithdrawalCreate(APIView):
+    @idempotent("wallet.withdraw")
+    def post(self, request, pk):
+        wallet = get_object_or_404(Account, pk=pk, type=Account.Type.USER_WALLET)
+        s = WithdrawalCreateSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+        try:
+            wd = withdrawals.create_withdrawal(
+                wallet, s.validated_data["amount"], s.validated_data["bank_account"], request.idempotency_key
+            )
+        except services.LedgerError as exc:
+            return ledger_error(exc)
+        wd.refresh_from_db()
+        return Response(WithdrawalSerializer(wd).data, status=201)
+
+
+class WithdrawalDetail(generics.RetrieveAPIView):
+    queryset = Withdrawal.objects.all()
+    serializer_class = WithdrawalSerializer

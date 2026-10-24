@@ -16,3 +16,43 @@ def make_wallet(db):
         return w
 
     return _make
+
+
+@pytest.fixture
+def webhook_transport(monkeypatch):
+    """Route the provider's outgoing webhook HTTP calls into the Django test client."""
+    from django.test import Client
+
+    import provider.tasks
+
+    client = Client()
+    calls = []
+
+    def fake_post(url, body, headers):
+        extra = {f"HTTP_{k.upper().replace('-', '_')}": v for k, v in headers.items() if k != "Content-Type"}
+        resp = client.post("/api/webhooks/provider/", data=body, content_type="application/json", **extra)
+        calls.append((body, resp.status_code, resp.json()))
+        return resp.status_code
+
+    monkeypatch.setattr(provider.tasks, "http_post", fake_post)
+    return calls
+
+
+@pytest.fixture
+def run_with_retries(monkeypatch):
+    """Drive a Celery task like a worker would: on ``self.retry`` record the failure and
+    run the next attempt (with request.retries incremented) instead of sleeping."""
+    from celery.exceptions import Retry
+
+    def _run(task, args, max_attempts=10):
+        def fake_retry(exc=None, **kwargs):
+            raise Retry(exc=exc)
+
+        monkeypatch.setattr(task, "retry", fake_retry)
+        for attempt in range(max_attempts):
+            res = task.apply(args=args, retries=attempt, throw=False)
+            if res.state == "SUCCESS":
+                return res, attempt + 1
+        raise AssertionError("task never succeeded")
+
+    return _run

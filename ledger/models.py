@@ -104,3 +104,34 @@ class OutboxEvent(models.Model):
     payload = models.JSONField()
     created_at = models.DateTimeField(auto_now_add=True)
     published_at = models.DateTimeField(null=True, blank=True)
+
+
+class WebhookEvent(models.Model):
+    """Every provider webhook we accepted; unique provider_event_id gives dedupe."""
+
+    provider_event_id = models.CharField(max_length=100, unique=True)
+    event_type = models.CharField(max_length=100)
+    payload = models.JSONField()
+    received_at = models.DateTimeField(auto_now_add=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+
+
+class Withdrawal(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending"
+        POSTED = "posted"
+        FAILED = "failed"
+
+    wallet = models.ForeignKey(Account, on_delete=models.PROTECT, related_name="withdrawals")
+    amount = models.BigIntegerField()
+    currency = models.CharField(max_length=3, choices=Currency.choices)
+    bank_account = models.CharField(max_length=34)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
+    hold_transaction = models.OneToOneField(Transaction, on_delete=models.PROTECT, related_name="+")
+    final_transaction = models.OneToOneField(
+        Transaction, null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    provider_ref = models.CharField(max_length=100, blank=True, default="")
+    failure_reason = models.CharField(max_length=255, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)

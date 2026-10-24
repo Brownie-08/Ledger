@@ -11,6 +11,7 @@ INSTALLED_APPS = [
     "django.contrib.auth",
     "rest_framework",
     "ledger",
+    "provider",
 ]
 MIDDLEWARE = ["django.middleware.common.CommonMiddleware"]
 ROOT_URLCONF = "config.urls"
@@ -38,3 +39,9 @@ REST_FRAMEWORK = {
 
 CELERY_BROKER_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 CELERY_TASK_ALWAYS_EAGER = os.environ.get("CELERY_EAGER", "0") == "1"
+CELERY_TASK_EAGER_PROPAGATES = True
+
+# --- Mock payment provider (week 3) ---
+PROVIDER_WEBHOOK_SECRET = os.environ.get("PROVIDER_WEBHOOK_SECRET", "whsec_dev_secret")
+PROVIDER_WEBHOOK_URL = os.environ.get("PROVIDER_WEBHOOK_URL", "http://localhost:8000/api/webhooks/provider/")
+PROVIDER_WEBHOOK_TOLERANCE_SECONDS = int(os.environ.get("PROVIDER_WEBHOOK_TOLERANCE_SECONDS", "300"))

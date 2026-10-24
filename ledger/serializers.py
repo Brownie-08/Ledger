@@ -1,7 +1,7 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
-from .models import Account, Currency, Entry
+from .models import Account, Currency, Entry, Withdrawal
 
 
 class WalletSerializer(serializers.ModelSerializer):
@@ -50,4 +50,28 @@ class EntrySerializer(serializers.ModelSerializer):
             "amount",
             "currency",
             "created_at",
+        ]
+
+
+class WithdrawalCreateSerializer(serializers.Serializer):
+    amount = serializers.IntegerField(min_value=1)
+    bank_account = serializers.RegexField(r"^[0-9]{6,34}$")
+
+
+class WithdrawalSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Withdrawal
+        fields = [
+            "id",
+            "wallet",
+            "amount",
+            "currency",
+            "bank_account",
+            "status",
+            "provider_ref",
+            "failure_reason",
+            "hold_transaction",
+            "final_transaction",
+            "created_at",
+            "updated_at",
         ]
