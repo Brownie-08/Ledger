@@ -188,3 +188,40 @@ class Refund(models.Model):
     transaction = models.OneToOneField(Transaction, on_delete=models.PROTECT, related_name="refund_record")
     amount = models.BigIntegerField()
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+class AuditLog(models.Model):
+    """Append-only trail of every money-moving action (who, what, when, from which request)."""
+
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT)
+    action = models.CharField(max_length=100)
+    transaction = models.ForeignKey(Transaction, null=True, blank=True, on_delete=models.PROTECT)
+    object_type = models.CharField(max_length=50, blank=True, default="")
+    object_id = models.CharField(max_length=50, blank=True, default="")
+    data = models.JSONField(default=dict, blank=True)
+    request_id = models.CharField(max_length=64, blank=True, default="")
+    ip = models.GenericIPAddressField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["action", "-created_at"])]
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise AppendOnlyError("Audit log is append-only")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise AppendOnlyError("Audit log is append-only")
+
+
+class ReconciliationReport(models.Model):
+    class Status(models.TextChoices):
+        CLEAN = "clean"
+        MISMATCHES = "mismatches"
+
+    status = models.CharField(max_length=12, choices=Status.choices)
+    started_at = models.DateTimeField()
+    finished_at = models.DateTimeField()
+    summary = models.JSONField(default=dict)
+    mismatches = models.JSONField(default=list)

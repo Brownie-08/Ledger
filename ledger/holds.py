@@ -7,6 +7,7 @@ from django.db.models import F
 from django.utils import timezone
 
 from . import services
+from .audit import audit
 from .models import Account, Hold
 from .services import EntrySpec, LedgerError
 
@@ -93,5 +94,6 @@ def expire_due_holds(now=None):
     now = now or timezone.now()
     ids = list(Hold.objects.filter(status=Hold.Status.ACTIVE, expires_at__lte=now).values_list("id", flat=True))
     for hold_id in ids:
-        release_hold(hold_id, status=Hold.Status.EXPIRED)
+        hold = release_hold(hold_id, status=Hold.Status.EXPIRED)
+        audit("hold.expire", obj=hold, amount=hold.amount)
     return len(ids)

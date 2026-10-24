@@ -51,3 +51,12 @@ def expire_holds():
     from .holds import expire_due_holds
 
     return expire_due_holds()
+
+
+@shared_task
+def nightly_reconciliation():
+    from .reconciliation import run_reconciliation
+
+    report = run_reconciliation()
+    log.info("reconciliation finished", extra={"report_id": report.id, "status": report.status})
+    return report.id

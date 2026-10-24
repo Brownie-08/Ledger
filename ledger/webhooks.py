@@ -7,7 +7,8 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from . import services, withdrawals
-from .models import Account, WebhookEvent
+from .audit import audit
+from .models import Account, Transaction, WebhookEvent
 
 log = logging.getLogger(__name__)
 
@@ -47,7 +48,14 @@ def process_event(event: dict) -> str:
     try:
         with transaction.atomic():
             record = WebhookEvent.objects.create(provider_event_id=event["id"], event_type=event["type"], payload=event)
-            handler(event["data"])
+            result = handler(event["data"])
+            audit(
+                f"webhook.{event['type']}",
+                transaction=result if isinstance(result, Transaction) else getattr(result, "final_transaction", None),
+                obj=record,
+                provider_event_id=event["id"],
+                provider_ref=event["data"].get("provider_ref"),
+            )
             record.processed_at = timezone.now()
             record.save(update_fields=["processed_at"])
     except IntegrityError:

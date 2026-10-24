@@ -13,7 +13,13 @@ class ChargeSerializer(serializers.Serializer):
 
 
 class SimulatedCheckout(APIView):
-    """Pretend a customer paid by card at the provider's hosted checkout."""
+    """Pretend a customer paid by card at the provider's hosted checkout.
+
+    This stands in for an external service, so it doesn't use our JWT auth (anon throttle still applies).
+    """
+
+    authentication_classes = []
+    permission_classes = []
 
     def post(self, request):
         s = ChargeSerializer(data=request.data)

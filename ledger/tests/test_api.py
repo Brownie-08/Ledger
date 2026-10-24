@@ -5,8 +5,11 @@ pytestmark = pytest.mark.django_db
 
 
 @pytest.fixture
-def api():
-    return APIClient()
+def api(django_user_model):
+    """Core API tests run as an operator (staff) so they can seed via the back-office deposit endpoint."""
+    client = APIClient()
+    client.force_authenticate(django_user_model.objects.create_user("ops", password="x", is_staff=True))
+    return client
 
 
 def post(api, url, data, key):

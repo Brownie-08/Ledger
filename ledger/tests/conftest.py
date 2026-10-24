@@ -13,6 +13,17 @@ def _no_fees_by_default(settings):
     settings.TRANSFER_FEE_MAX = 0
 
 
+@pytest.fixture(autouse=True)
+def _relaxed_throttles(settings):
+    """Throttle tests set their own limits; everyone else shouldn't trip them."""
+    from django.core.cache import cache
+
+    settings.LEDGER_THROTTLE_RATES = {"anon": "10000/min", "user": "10000/min", "money": "10000/min"}
+    cache.clear()
+    yield
+    cache.clear()
+
+
 @pytest.fixture
 def make_wallet(db):
     def _make(username, currency="NGN", balance=0):

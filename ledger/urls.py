@@ -1,8 +1,15 @@
 from django.urls import path
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from . import views
 
 urlpatterns = [
+    path("auth/register/", views.Register.as_view()),
+    path("auth/token/", TokenObtainPairView.as_view()),
+    path("auth/token/refresh/", TokenRefreshView.as_view()),
+    path("admin/reconciliation/", views.ReconciliationListRun.as_view()),
+    path("admin/reconciliation/<int:pk>/", views.ReconciliationDetail.as_view()),
+    path("admin/audit-logs/", views.AuditLogList.as_view()),
     path("wallets/", views.WalletListCreate.as_view()),
     path("wallets/<int:pk>/", views.WalletDetail.as_view()),
     path("wallets/<int:pk>/deposit/", views.Deposit.as_view()),

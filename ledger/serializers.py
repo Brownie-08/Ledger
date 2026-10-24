@@ -25,13 +25,18 @@ class WalletSerializer(serializers.ModelSerializer):
 
 class WalletCreateSerializer(serializers.Serializer):
     owner = serializers.PrimaryKeyRelatedField(queryset=get_user_model().objects.all(), required=False)
-    username = serializers.CharField(required=False)
+    username = serializers.CharField(required=False)  # staff only: create for another user
     currency = serializers.ChoiceField(choices=Currency.choices)
 
-    def validate(self, attrs):
-        if not attrs.get("owner") and not attrs.get("username"):
-            raise serializers.ValidationError("Provide owner (user id) or username")
-        return attrs
+
+class RegisterSerializer(serializers.Serializer):
+    username = serializers.CharField(max_length=150)
+    password = serializers.CharField(min_length=8, write_only=True)
+
+    def validate_username(self, v):
+        if get_user_model().objects.filter(username=v).exists():
+            raise serializers.ValidationError("username taken")
+        return v
 
 
 class DepositSerializer(serializers.Serializer):
@@ -131,3 +136,30 @@ class FxRateSerializer(serializers.ModelSerializer):
     class Meta:
         model = FxRate
         fields = ["base", "quote", "rate", "updated_at"]
+
+
+class AuditLogSerializer(serializers.ModelSerializer):
+    class Meta:
+        from .models import AuditLog
+
+        model = AuditLog
+        fields = [
+            "id",
+            "actor",
+            "action",
+            "transaction",
+            "object_type",
+            "object_id",
+            "data",
+            "request_id",
+            "ip",
+            "created_at",
+        ]
+
+
+class ReconciliationReportSerializer(serializers.ModelSerializer):
+    class Meta:
+        from .models import ReconciliationReport
+
+        model = ReconciliationReport
+        fields = ["id", "status", "started_at", "finished_at", "summary", "mismatches"]
