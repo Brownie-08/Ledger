@@ -43,3 +43,11 @@ def submit_payout(self, withdrawal_id):
     except provider_api.ProviderUnavailable as exc:
         log.warning("provider unavailable, retrying", extra={"withdrawal_id": wd.id, "retry": self.request.retries})
         raise self.retry(exc=exc)
+
+
+@shared_task
+def expire_holds():
+    """Celery beat: release authorisations past their expiry."""
+    from .holds import expire_due_holds
+
+    return expire_due_holds()

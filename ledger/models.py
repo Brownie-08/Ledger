@@ -18,6 +18,7 @@ class Account(models.Model):
         SYSTEM_CASH = "system_cash"
         FEES = "fees"
         SUSPENSE = "suspense"
+        FX = "fx"
 
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="accounts"
@@ -25,6 +26,7 @@ class Account(models.Model):
     currency = models.CharField(max_length=3, choices=Currency.choices)
     type = models.CharField(max_length=20, choices=Type.choices, default=Type.USER_WALLET)
     balance = models.BigIntegerField(default=0)  # cached, minor units
+    held_amount = models.BigIntegerField(default=0)  # sum of active holds (authorisations)
     version = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -41,6 +43,10 @@ class Account(models.Model):
                 name="one_system_account_per_type_currency",
             ),
         ]
+
+    @property
+    def available_balance(self):
+        return self.balance - self.held_amount
 
 
 class Transaction(models.Model):
@@ -135,3 +141,50 @@ class Withdrawal(models.Model):
     failure_reason = models.CharField(max_length=255, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+
+class Hold(models.Model):
+    """Card-style authorisation: reserves funds (reduces available balance) without moving them."""
+
+    class Status(models.TextChoices):
+        ACTIVE = "active"
+        CAPTURED = "captured"
+        RELEASED = "released"
+        EXPIRED = "expired"
+
+    account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name="holds")
+    merchant = models.ForeignKey(Account, on_delete=models.PROTECT, related_name="incoming_holds")
+    amount = models.BigIntegerField()
+    captured_amount = models.BigIntegerField(default=0)
+    currency = models.CharField(max_length=3, choices=Currency.choices)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.ACTIVE)
+    idempotency_key = models.CharField(max_length=255, unique=True)
+    reference = models.CharField(max_length=255, blank=True, default="")
+    expires_at = models.DateTimeField()
+    capture_transaction = models.OneToOneField(
+        Transaction, null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["status", "expires_at"])]
+
+
+class FxRate(models.Model):
+    """Fixed FX table: 1 unit of ``base`` = ``rate`` units of ``quote``."""
+
+    base = models.CharField(max_length=3, choices=Currency.choices)
+    quote = models.CharField(max_length=3, choices=Currency.choices)
+    rate = models.DecimalField(max_digits=20, decimal_places=10)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["base", "quote"], name="uniq_fx_pair")]
+
+
+class Refund(models.Model):
+    original = models.ForeignKey(Transaction, on_delete=models.PROTECT, related_name="refunds")
+    transaction = models.OneToOneField(Transaction, on_delete=models.PROTECT, related_name="refund_record")
+    amount = models.BigIntegerField()
+    created_at = models.DateTimeField(auto_now_add=True)

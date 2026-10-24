@@ -5,6 +5,14 @@ from ledger import services
 from ledger.models import Account
 
 
+@pytest.fixture(autouse=True)
+def _no_fees_by_default(settings):
+    """Core tests assume fee-free transfers; fee tests opt in explicitly."""
+    settings.TRANSFER_FEE_BPS = 0
+    settings.TRANSFER_FEE_MIN = 0
+    settings.TRANSFER_FEE_MAX = 0
+
+
 @pytest.fixture
 def make_wallet(db):
     def _make(username, currency="NGN", balance=0):

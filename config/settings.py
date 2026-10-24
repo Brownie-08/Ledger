@@ -45,3 +45,13 @@ CELERY_TASK_EAGER_PROPAGATES = True
 PROVIDER_WEBHOOK_SECRET = os.environ.get("PROVIDER_WEBHOOK_SECRET", "whsec_dev_secret")
 PROVIDER_WEBHOOK_URL = os.environ.get("PROVIDER_WEBHOOK_URL", "http://localhost:8000/api/webhooks/provider/")
 PROVIDER_WEBHOOK_TOLERANCE_SECONDS = int(os.environ.get("PROVIDER_WEBHOOK_TOLERANCE_SECONDS", "300"))
+
+# --- Fees (week 4). Basis points of the transfer amount, min/max in minor units (0 = no cap).
+TRANSFER_FEE_BPS = int(os.environ.get("TRANSFER_FEE_BPS", "50"))  # 0.5%
+TRANSFER_FEE_MIN = int(os.environ.get("TRANSFER_FEE_MIN", "0"))
+TRANSFER_FEE_MAX = int(os.environ.get("TRANSFER_FEE_MAX", "0"))
+
+CELERY_BEAT_SCHEDULE = {
+    "expire-holds": {"task": "ledger.tasks.expire_holds", "schedule": 60.0},
+    "publish-outbox": {"task": "ledger.tasks.publish_outbox", "schedule": 10.0},
+}

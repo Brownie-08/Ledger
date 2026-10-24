@@ -2,11 +2,13 @@
 
 from collections import defaultdict
 from dataclasses import dataclass
+from decimal import ROUND_DOWN, Decimal
 
+from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.db.models import F
 
-from .models import Account, Entry, OutboxEvent, Transaction
+from .models import Account, Entry, FxRate, OutboxEvent, Refund, Transaction
 
 
 class LedgerError(Exception):
@@ -27,6 +29,14 @@ class InsufficientFunds(LedgerError):
 
 class AlreadyReversed(LedgerError):
     code = "already_reversed"
+
+
+class NoFxRate(LedgerError):
+    code = "no_fx_rate"
+
+
+class NotRefundable(LedgerError):
+    code = "not_refundable"
 
 
 @dataclass(frozen=True)
@@ -70,7 +80,8 @@ def post_transaction(entries, idempotency_key, *, type="generic", reference="", 
                 deltas[e.account_id] += e.amount
             for acc_id, delta in deltas.items():
                 acc = accounts[acc_id]
-                if acc.type == Account.Type.USER_WALLET and acc.balance + delta < 0:
+                # Available = balance - active holds; only debits are checked.
+                if acc.type == Account.Type.USER_WALLET and delta < 0 and acc.balance - acc.held_amount + delta < 0:
                     raise InsufficientFunds(f"Account {acc_id} has insufficient funds")
 
             txn = Transaction.objects.create(
@@ -135,12 +146,80 @@ def deposit(wallet, amount, idempotency_key, reference=""):
     )
 
 
+def compute_fee(amount):
+    """Configurable transfer fee: basis points with optional min/max (all minor units)."""
+    bps = int(getattr(settings, "TRANSFER_FEE_BPS", 0))
+    fee = max(amount * bps // 10_000, int(getattr(settings, "TRANSFER_FEE_MIN", 0)))
+    cap = int(getattr(settings, "TRANSFER_FEE_MAX", 0))
+    return min(fee, cap) if cap else fee
+
+
+def get_rate(base, quote):
+    try:
+        return FxRate.objects.get(base=base, quote=quote).rate
+    except FxRate.DoesNotExist:
+        raise NoFxRate(f"No FX rate for {base}->{quote}")
+
+
+def convert(amount, rate):
+    """Convert minor units (all supported currencies have 2 decimals); always round down."""
+    return int((Decimal(amount) * Decimal(rate)).quantize(Decimal(1), rounding=ROUND_DOWN))
+
+
 def transfer(source, destination, amount, idempotency_key, reference=""):
+    """Wallet-to-wallet transfer with fee; converts via per-currency FX accounts if currencies differ.
+
+    Same currency:  src -(amount+fee) | dst +amount | fees +fee
+    Cross currency: src -(amount+fee) A | fees_A +fee A | fx_A +amount A | fx_B -converted B | dst +converted B
+    Every currency still nets to zero inside the transaction.
+    """
     if source.id == destination.id:
         raise LedgerError("Cannot transfer to the same wallet")
-    return post_transaction(
-        [EntrySpec(source.id, -amount, source.currency), EntrySpec(destination.id, amount, destination.currency)],
-        idempotency_key,
-        type="transfer",
-        reference=reference,
-    )
+    a = source.currency
+    fee = compute_fee(amount)
+    meta = {"source": source.id, "destination": destination.id, "amount": amount, "fee": fee}
+    specs = [EntrySpec(source.id, -(amount + fee), a)]
+    if fee:
+        specs.append(EntrySpec(system_account(Account.Type.FEES, a).id, fee, a))
+    if destination.currency == a:
+        specs.append(EntrySpec(destination.id, amount, a))
+        txn_type = "transfer"
+    else:
+        b = destination.currency
+        rate = get_rate(a, b)
+        converted = convert(amount, rate)
+        if converted <= 0:
+            raise LedgerError("Amount too small to convert")
+        specs += [
+            EntrySpec(system_account(Account.Type.FX, a).id, amount, a),
+            EntrySpec(system_account(Account.Type.FX, b).id, -converted, b),
+            EntrySpec(destination.id, converted, b),
+        ]
+        meta.update({"rate": str(rate), "converted_amount": converted, "to_currency": b})
+        txn_type = "fx_transfer"
+    return post_transaction(specs, idempotency_key, type=txn_type, reference=reference, metadata=meta)
+
+
+def refund_transaction(txn_id, amount, idempotency_key, reason=""):
+    """Full or partial refund of a same-currency transfer or hold capture (fees are not refunded)."""
+    existing = Transaction.objects.filter(idempotency_key=idempotency_key).first()
+    if existing:
+        return existing
+    with transaction.atomic():
+        original = Transaction.objects.select_for_update().get(pk=txn_id)
+        if original.type not in ("transfer", "capture") or original.status != Transaction.Status.POSTED:
+            raise NotRefundable(f"Transaction {txn_id} ({original.type}/{original.status}) cannot be refunded")
+        meta = original.metadata
+        refunded = sum(original.refunds.values_list("amount", flat=True))
+        if amount <= 0 or amount > meta["amount"] - refunded:
+            raise NotRefundable(f"Refund exceeds refundable amount ({meta['amount'] - refunded})")
+        currency = original.entries.get(account_id=meta["destination"]).currency
+        txn = post_transaction(
+            [EntrySpec(meta["destination"], -amount, currency), EntrySpec(meta["source"], amount, currency)],
+            idempotency_key,
+            type="refund",
+            reference=f"refund:{txn_id}",
+            metadata={"refund_of": txn_id, "amount": amount, "reason": reason},
+        )
+        Refund.objects.create(original=original, transaction=txn, amount=amount)
+        return txn
