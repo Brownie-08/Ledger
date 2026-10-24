@@ -1,0 +1,1319 @@
+openapi: 3.0.3
+info:
+  title: Ledger Wallet API
+  version: 1.0.0
+  description: 'Double-entry payments ledger: wallets, transfers, FX, holds, refunds,
+    withdrawals, webhooks. Amounts are integers in minor units. All money-moving POSTs
+    require an Idempotency-Key header.'
+paths:
+  /api/admin/audit-logs/:
+    get:
+      operationId: api_admin_audit_logs_list
+      parameters:
+      - name: cursor
+        required: false
+        in: query
+        description: The pagination cursor value.
+        schema:
+          type: string
+      - name: page_size
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      tags:
+      - api
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedAuditLogList'
+          description: ''
+  /api/admin/reconciliation/:
+    get:
+      operationId: api_admin_reconciliation_list
+      parameters:
+      - name: cursor
+        required: false
+        in: query
+        description: The pagination cursor value.
+        schema:
+          type: string
+      - name: page_size
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      tags:
+      - api
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedReconciliationReportList'
+          description: ''
+    post:
+      operationId: api_admin_reconciliation_create
+      tags:
+      - api
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReconciliationReport'
+          description: ''
+  /api/admin/reconciliation/{id}/:
+    get:
+      operationId: api_admin_reconciliation_retrieve
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - api
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReconciliationReport'
+          description: ''
+  /api/auth/register/:
+    post:
+      operationId: api_auth_register_create
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisteredUser'
+          description: ''
+  /api/auth/token/:
+    post:
+      operationId: api_auth_token_create
+      description: |-
+        Takes a set of user credentials and returns an access and refresh JSON web
+        token pair to prove the authentication of those credentials.
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenObtainPairRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TokenObtainPairRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TokenObtainPairRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenObtainPair'
+          description: ''
+  /api/auth/token/refresh/:
+    post:
+      operationId: api_auth_token_refresh_create
+      description: |-
+        Takes a refresh type JSON web token and returns an access type JSON web
+        token if the refresh token is valid.
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenRefreshRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TokenRefreshRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TokenRefreshRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenRefresh'
+          description: ''
+  /api/fx-rates/:
+    get:
+      operationId: api_fx_rates_list
+      tags:
+      - api
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/FxRate'
+          description: ''
+  /api/holds/{id}/:
+    get:
+      operationId: api_holds_retrieve
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - api
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Hold'
+          description: ''
+  /api/holds/{id}/capture/:
+    post:
+      operationId: api_holds_capture_create
+      description: Money-moving endpoints get an extra, tighter throttle.
+      parameters:
+      - in: header
+        name: Idempotency-Key
+        schema:
+          type: string
+        description: 'Unique per logical operation. Replays return the original response
+          with Idempotent-Replayed: true.'
+        required: true
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaptureRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/CaptureRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/CaptureRequest'
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Hold'
+          description: ''
+  /api/holds/{id}/release/:
+    post:
+      operationId: api_holds_release_create
+      description: Money-moving endpoints get an extra, tighter throttle.
+      parameters:
+      - in: header
+        name: Idempotency-Key
+        schema:
+          type: string
+        description: 'Unique per logical operation. Replays return the original response
+          with Idempotent-Replayed: true.'
+        required: true
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - api
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Hold'
+          description: ''
+  /api/transactions/{id}/refund/:
+    post:
+      operationId: api_transactions_refund_create
+      description: Refund is issued by whoever received the money (payee/merchant),
+        or staff.
+      parameters:
+      - in: header
+        name: Idempotency-Key
+        schema:
+          type: string
+        description: 'Unique per logical operation. Replays return the original response
+          with Idempotent-Replayed: true.'
+        required: true
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefundRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/RefundRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/RefundRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostedTransaction'
+          description: ''
+  /api/transactions/{id}/reverse/:
+    post:
+      operationId: api_transactions_reverse_create
+      description: Money-moving endpoints get an extra, tighter throttle.
+      parameters:
+      - in: header
+        name: Idempotency-Key
+        schema:
+          type: string
+        description: 'Unique per logical operation. Replays return the original response
+          with Idempotent-Replayed: true.'
+        required: true
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReverseRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ReverseRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ReverseRequest'
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostedTransaction'
+          description: ''
+  /api/transfers/:
+    post:
+      operationId: api_transfers_create
+      description: Money-moving endpoints get an extra, tighter throttle.
+      parameters:
+      - in: header
+        name: Idempotency-Key
+        schema:
+          type: string
+        description: 'Unique per logical operation. Replays return the original response
+          with Idempotent-Replayed: true.'
+        required: true
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TransferRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TransferRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostedTransaction'
+          description: ''
+  /api/wallets/:
+    get:
+      operationId: api_wallets_list
+      tags:
+      - api
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Wallet'
+          description: ''
+    post:
+      operationId: api_wallets_create
+      parameters:
+      - in: header
+        name: Idempotency-Key
+        schema:
+          type: string
+        description: 'Unique per logical operation. Replays return the original response
+          with Idempotent-Replayed: true.'
+        required: true
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WalletCreateRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/WalletCreateRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/WalletCreateRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wallet'
+          description: ''
+  /api/wallets/{id}/:
+    get:
+      operationId: api_wallets_retrieve
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - api
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wallet'
+          description: ''
+  /api/wallets/{id}/deposit/:
+    post:
+      operationId: api_wallets_deposit_create
+      description: Manual/back-office credit. Customer deposits arrive via the signed
+        provider webhook.
+      parameters:
+      - in: header
+        name: Idempotency-Key
+        schema:
+          type: string
+        description: 'Unique per logical operation. Replays return the original response
+          with Idempotent-Replayed: true.'
+        required: true
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DepositRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/DepositRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/DepositRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostedTransaction'
+          description: ''
+  /api/wallets/{id}/holds/:
+    post:
+      operationId: api_wallets_holds_create
+      description: Money-moving endpoints get an extra, tighter throttle.
+      parameters:
+      - in: header
+        name: Idempotency-Key
+        schema:
+          type: string
+        description: 'Unique per logical operation. Replays return the original response
+          with Idempotent-Replayed: true.'
+        required: true
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HoldCreateRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/HoldCreateRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/HoldCreateRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Hold'
+          description: ''
+  /api/wallets/{id}/transactions/:
+    get:
+      operationId: api_wallets_transactions_list
+      parameters:
+      - name: cursor
+        required: false
+        in: query
+        description: The pagination cursor value.
+        schema:
+          type: string
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      - name: page_size
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      tags:
+      - api
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedEntryList'
+          description: ''
+  /api/wallets/{id}/withdrawals/:
+    post:
+      operationId: api_wallets_withdrawals_create
+      description: Money-moving endpoints get an extra, tighter throttle.
+      parameters:
+      - in: header
+        name: Idempotency-Key
+        schema:
+          type: string
+        description: 'Unique per logical operation. Replays return the original response
+          with Idempotent-Replayed: true.'
+        required: true
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WithdrawalCreateRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/WithdrawalCreateRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/WithdrawalCreateRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Withdrawal'
+          description: ''
+  /api/webhooks/provider/:
+    post:
+      operationId: api_webhooks_provider_create
+      description: Authenticated by HMAC signature, not JWT.
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProviderEventRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ProviderEventRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ProviderEventRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookResult'
+          description: ''
+  /api/withdrawals/{id}/:
+    get:
+      operationId: api_withdrawals_retrieve
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - api
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Withdrawal'
+          description: ''
+  /provider/charges/:
+    post:
+      operationId: provider_charges_create
+      description: |-
+        Pretend a customer paid by card at the provider's hosted checkout.
+
+        This stands in for an external service, so it doesn't use our JWT auth (anon throttle still applies).
+      tags:
+      - provider
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChargeRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ChargeRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ChargeRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderCharge'
+          description: ''
+components:
+  schemas:
+    AuditLog:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        actor:
+          type: integer
+          nullable: true
+        action:
+          type: string
+          maxLength: 100
+        transaction:
+          type: integer
+          nullable: true
+        object_type:
+          type: string
+          maxLength: 50
+        object_id:
+          type: string
+          maxLength: 50
+        data: {}
+        request_id:
+          type: string
+          maxLength: 64
+        ip:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - action
+      - created_at
+      - id
+    CaptureRequest:
+      type: object
+      properties:
+        amount:
+          type: integer
+          minimum: 1
+    ChargeCurrencyEnum:
+      enum:
+      - NGN
+      - USD
+      - GBP
+      type: string
+      description: |-
+        * `NGN` - NGN
+        * `USD` - USD
+        * `GBP` - GBP
+    ChargeRequest:
+      type: object
+      properties:
+        wallet_id:
+          type: integer
+        amount:
+          type: integer
+          minimum: 1
+        currency:
+          $ref: '#/components/schemas/ChargeCurrencyEnum'
+        client_reference:
+          type: string
+          minLength: 1
+      required:
+      - amount
+      - currency
+      - wallet_id
+    CurrencyEnum:
+      enum:
+      - NGN
+      - USD
+      - GBP
+      type: string
+      description: |-
+        * `NGN` - Ngn
+        * `USD` - Usd
+        * `GBP` - Gbp
+    DepositRequest:
+      type: object
+      properties:
+        amount:
+          type: integer
+          minimum: 1
+        reference:
+          type: string
+          default: ''
+      required:
+      - amount
+    Entry:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        transaction:
+          type: integer
+        transaction_type:
+          type: string
+        transaction_status:
+          type: string
+        reference:
+          type: string
+        amount:
+          type: integer
+          maximum: 9223372036854775807
+          minimum: -9223372036854775808
+          format: int64
+        currency:
+          $ref: '#/components/schemas/CurrencyEnum'
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - amount
+      - created_at
+      - currency
+      - id
+      - reference
+      - transaction
+      - transaction_status
+      - transaction_type
+    FxRate:
+      type: object
+      properties:
+        base:
+          $ref: '#/components/schemas/CurrencyEnum'
+        quote:
+          $ref: '#/components/schemas/CurrencyEnum'
+        rate:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,10})?$
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - base
+      - quote
+      - rate
+      - updated_at
+    Hold:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        account:
+          type: integer
+        merchant:
+          type: integer
+        amount:
+          type: integer
+          maximum: 9223372036854775807
+          minimum: -9223372036854775808
+          format: int64
+        captured_amount:
+          type: integer
+          maximum: 9223372036854775807
+          minimum: -9223372036854775808
+          format: int64
+        currency:
+          $ref: '#/components/schemas/CurrencyEnum'
+        status:
+          $ref: '#/components/schemas/HoldStatusEnum'
+        reference:
+          type: string
+          maxLength: 255
+        expires_at:
+          type: string
+          format: date-time
+        capture_transaction:
+          type: integer
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - account
+      - amount
+      - created_at
+      - currency
+      - expires_at
+      - id
+      - merchant
+    HoldCreateRequest:
+      type: object
+      properties:
+        merchant_wallet:
+          type: integer
+        amount:
+          type: integer
+          minimum: 1
+        expires_in_seconds:
+          type: integer
+          maximum: 2592000
+          minimum: 1
+          default: 604800
+        reference:
+          type: string
+          default: ''
+      required:
+      - amount
+      - merchant_wallet
+    HoldStatusEnum:
+      enum:
+      - active
+      - captured
+      - released
+      - expired
+      type: string
+      description: |-
+        * `active` - Active
+        * `captured` - Captured
+        * `released` - Released
+        * `expired` - Expired
+    PaginatedAuditLogList:
+      type: object
+      required:
+      - results
+      properties:
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?cursor=cD00ODY%3D"
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?cursor=cj0xJnA9NDg3
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditLog'
+    PaginatedEntryList:
+      type: object
+      required:
+      - results
+      properties:
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?cursor=cD00ODY%3D"
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?cursor=cj0xJnA9NDg3
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Entry'
+    PaginatedReconciliationReportList:
+      type: object
+      required:
+      - results
+      properties:
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?cursor=cD00ODY%3D"
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?cursor=cj0xJnA9NDg3
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReconciliationReport'
+    PostedEntry:
+      type: object
+      properties:
+        account_id:
+          type: integer
+        amount:
+          type: integer
+        currency:
+          type: string
+      required:
+      - account_id
+      - amount
+      - currency
+    PostedTransaction:
+      type: object
+      properties:
+        transaction_id:
+          type: integer
+        type:
+          type: string
+        status:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: {}
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/PostedEntry'
+      required:
+      - entries
+      - metadata
+      - status
+      - transaction_id
+      - type
+    ProviderCharge:
+      type: object
+      properties:
+        provider_ref:
+          type: string
+        status:
+          type: string
+        amount:
+          type: integer
+        currency:
+          type: string
+      required:
+      - amount
+      - currency
+      - provider_ref
+      - status
+    ProviderEventRequest:
+      type: object
+      properties:
+        id:
+          type: string
+          minLength: 1
+        type:
+          type: string
+          minLength: 1
+        data:
+          type: object
+          additionalProperties: {}
+      required:
+      - data
+      - id
+      - type
+    ReconciliationReport:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        status:
+          $ref: '#/components/schemas/ReconciliationReportStatusEnum'
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+        summary: {}
+        mismatches: {}
+      required:
+      - finished_at
+      - id
+      - started_at
+      - status
+    ReconciliationReportStatusEnum:
+      enum:
+      - clean
+      - mismatches
+      type: string
+      description: |-
+        * `clean` - Clean
+        * `mismatches` - Mismatches
+    RefundRequest:
+      type: object
+      properties:
+        amount:
+          type: integer
+          minimum: 1
+        reason:
+          type: string
+          default: ''
+      required:
+      - amount
+    RegisterRequest:
+      type: object
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 150
+        password:
+          type: string
+          writeOnly: true
+          minLength: 8
+      required:
+      - password
+      - username
+    RegisteredUser:
+      type: object
+      properties:
+        id:
+          type: integer
+        username:
+          type: string
+      required:
+      - id
+      - username
+    ReverseRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          default: ''
+    TokenObtainPair:
+      type: object
+      properties:
+        access:
+          type: string
+          readOnly: true
+        refresh:
+          type: string
+          readOnly: true
+      required:
+      - access
+      - refresh
+    TokenObtainPairRequest:
+      type: object
+      properties:
+        username:
+          type: string
+          writeOnly: true
+          minLength: 1
+        password:
+          type: string
+          writeOnly: true
+          minLength: 1
+      required:
+      - password
+      - username
+    TokenRefresh:
+      type: object
+      properties:
+        access:
+          type: string
+          readOnly: true
+      required:
+      - access
+    TokenRefreshRequest:
+      type: object
+      properties:
+        refresh:
+          type: string
+          writeOnly: true
+          minLength: 1
+      required:
+      - refresh
+    TransferRequest:
+      type: object
+      properties:
+        source_wallet:
+          type: integer
+        destination_wallet:
+          type: integer
+        amount:
+          type: integer
+          minimum: 1
+        reference:
+          type: string
+          default: ''
+      required:
+      - amount
+      - destination_wallet
+      - source_wallet
+    TypeEnum:
+      enum:
+      - user_wallet
+      - system_cash
+      - fees
+      - suspense
+      - fx
+      type: string
+      description: |-
+        * `user_wallet` - User Wallet
+        * `system_cash` - System Cash
+        * `fees` - Fees
+        * `suspense` - Suspense
+        * `fx` - Fx
+    Wallet:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        owner:
+          type: integer
+          readOnly: true
+          nullable: true
+        currency:
+          allOf:
+          - $ref: '#/components/schemas/CurrencyEnum'
+          readOnly: true
+        type:
+          allOf:
+          - $ref: '#/components/schemas/TypeEnum'
+          readOnly: true
+          default: user_wallet
+        balance:
+          type: integer
+          readOnly: true
+        held_amount:
+          type: integer
+          readOnly: true
+        available_balance:
+          type: integer
+          readOnly: true
+        version:
+          type: integer
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - available_balance
+      - balance
+      - created_at
+      - currency
+      - held_amount
+      - id
+      - owner
+      - type
+      - version
+    WalletCreateRequest:
+      type: object
+      properties:
+        owner:
+          type: integer
+        username:
+          type: string
+          minLength: 1
+        currency:
+          $ref: '#/components/schemas/CurrencyEnum'
+      required:
+      - currency
+    WebhookResult:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+      - status
+    Withdrawal:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        wallet:
+          type: integer
+        amount:
+          type: integer
+          maximum: 9223372036854775807
+          minimum: -9223372036854775808
+          format: int64
+        currency:
+          $ref: '#/components/schemas/CurrencyEnum'
+        bank_account:
+          type: string
+          maxLength: 34
+        status:
+          $ref: '#/components/schemas/WithdrawalStatusEnum'
+        provider_ref:
+          type: string
+          maxLength: 100
+        failure_reason:
+          type: string
+          maxLength: 255
+        hold_transaction:
+          type: integer
+        final_transaction:
+          type: integer
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - amount
+      - bank_account
+      - created_at
+      - currency
+      - hold_transaction
+      - id
+      - updated_at
+      - wallet
+    WithdrawalCreateRequest:
+      type: object
+      properties:
+        amount:
+          type: integer
+          minimum: 1
+        bank_account:
+          type: string
+          minLength: 1
+          pattern: ^[0-9]{6,34}$
+      required:
+      - amount
+      - bank_account
+    WithdrawalStatusEnum:
+      enum:
+      - pending
+      - posted
+      - failed
+      type: string
+      description: |-
+        * `pending` - Pending
+        * `posted` - Posted
+        * `failed` - Failed
+  securitySchemes:
+    jwtAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
