@@ -178,6 +178,87 @@ paths:
               schema:
                 $ref: '#/components/schemas/ReconciliationReport'
           description: ''
+  /api/admin/suspense/:
+    get:
+      operationId: api_admin_suspense_list
+      description: Unresolved inbound money parked in suspense (unknown account, currency
+        mismatch, limit breach).
+      tags:
+      - api
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SuspenseItem'
+          description: ''
+  /api/admin/suspense/{id}/allocate/:
+    post:
+      operationId: api_admin_suspense_allocate_create
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SuspenseAllocateRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/SuspenseAllocateRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/SuspenseAllocateRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuspenseResolution'
+          description: ''
+  /api/admin/suspense/{id}/return/:
+    post:
+      operationId: api_admin_suspense_return_create
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SuspenseReturnRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/SuspenseReturnRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/SuspenseReturnRequest'
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuspenseResolution'
+          description: ''
   /api/auth/register/:
     post:
       operationId: api_auth_register_create
@@ -843,6 +924,14 @@ paths:
           description: ''
 components:
   schemas:
+    ActionEnum:
+      enum:
+      - allocate
+      - return
+      type: string
+      description: |-
+        * `allocate` - allocate
+        * `return` - return
     AuditLog:
       type: object
       properties:
@@ -1449,6 +1538,94 @@ components:
         * `nuban` - Nuban
         * `sort_code` - Sort Code
         * `aba` - Aba
+    SuspenseAllocateRequest:
+      type: object
+      properties:
+        wallet_id:
+          type: integer
+        override_limits:
+          type: boolean
+          default: false
+        reason:
+          type: string
+          default: ''
+          maxLength: 255
+      required:
+      - wallet_id
+    SuspenseItem:
+      type: object
+      properties:
+        transaction_id:
+          type: integer
+        provider_ref:
+          type: string
+        amount_minor:
+          type: integer
+        currency:
+          type: string
+        amount_display:
+          type: string
+        reason:
+          type: string
+        account_number:
+          type: string
+          nullable: true
+        sender_name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+      required:
+      - account_number
+      - amount_display
+      - amount_minor
+      - created_at
+      - currency
+      - provider_ref
+      - reason
+      - sender_name
+      - transaction_id
+    SuspenseResolution:
+      type: object
+      properties:
+        parked_transaction:
+          type: integer
+        action:
+          $ref: '#/components/schemas/ActionEnum'
+        wallet_id:
+          type: integer
+          nullable: true
+        transaction_id:
+          type: integer
+        amount_minor:
+          type: integer
+        override_limits:
+          type: boolean
+        reason:
+          type: string
+        actor:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+      required:
+      - action
+      - actor
+      - amount_minor
+      - created_at
+      - override_limits
+      - parked_transaction
+      - reason
+      - transaction_id
+      - wallet_id
+    SuspenseReturnRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          default: ''
+          maxLength: 255
     TokenObtainPair:
       type: object
       properties:

@@ -10,10 +10,17 @@ from django.db.models import F
 
 from .metrics import LEDGER_TRANSACTIONS
 from .models import Account, Entry, FxRate, OutboxEvent, Refund, Transaction
+from .money import fmt
 
 
 class LedgerError(Exception):
+    """Domain error. ``fields`` are machine-readable extras merged into the API error body."""
+
     code = "ledger_error"
+
+    def __init__(self, message="", **fields):
+        super().__init__(message)
+        self.fields = fields
 
 
 class UnbalancedTransaction(LedgerError):
@@ -60,10 +67,12 @@ class EntrySpec:
     currency: str
 
 
-def post_transaction(entries, idempotency_key, *, type="generic", reference="", metadata=None):
+def post_transaction(entries, idempotency_key, *, type="generic", reference="", metadata=None, override_limits=False):
     """Atomically post a balanced set of entries.
 
     Idempotent on ``idempotency_key``: a repeat call returns the existing transaction.
+    ``override_limits`` skips KYC tier limits (never balance/funds checks); only used for an explicit,
+    audited admin override (suspense allocation) and recorded in the transaction metadata by the caller.
     """
     entries = [e if isinstance(e, EntrySpec) else EntrySpec(**e) for e in entries]
     if len(entries) < 2:
@@ -96,11 +105,20 @@ def post_transaction(entries, idempotency_key, *, type="generic", reference="", 
                 acc = accounts[acc_id]
                 # Available = balance - active holds; only debits are checked.
                 if acc.type == Account.Type.USER_WALLET and delta < 0 and acc.balance - acc.held_amount + delta < 0:
-                    raise InsufficientFunds(f"Account {acc_id} has insufficient funds")
+                    available = acc.balance - acc.held_amount
+                    raise InsufficientFunds(
+                        f"Insufficient funds: requested {fmt(-delta, acc.currency)}, "
+                        f"available {fmt(available, acc.currency)}",
+                        account_id=acc_id,
+                        amount_minor=-delta,
+                        available_minor=available,
+                        currency=acc.currency,
+                    )
             # Tier limits are enforced here, under the row locks, so no code path can bypass them.
             from .kyc import enforce_tier_limits
 
-            enforce_tier_limits(accounts, deltas, type)
+            if not override_limits:
+                enforce_tier_limits(accounts, deltas, type)
 
             txn = Transaction.objects.create(
                 type=type,

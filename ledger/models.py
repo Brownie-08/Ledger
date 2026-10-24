@@ -278,3 +278,20 @@ class VirtualAccount(models.Model):
     routing_number = models.CharField(max_length=9, blank=True, default="")
     account_name = models.CharField(max_length=200, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+class SuspenseResolution(models.Model):
+    """Ops decision for one parked inbound (``inbound_unallocated``) transaction. One per parked item."""
+
+    class Action(models.TextChoices):
+        ALLOCATE = "allocate"
+        RETURN = "return"
+
+    parked = models.OneToOneField(Transaction, on_delete=models.PROTECT, related_name="suspense_resolution")
+    action = models.CharField(max_length=10, choices=Action.choices)
+    wallet = models.ForeignKey(Account, null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    resolution_txn = models.OneToOneField(Transaction, on_delete=models.PROTECT, related_name="+")
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT)
+    reason = models.CharField(max_length=255, blank=True)
+    override_limits = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)

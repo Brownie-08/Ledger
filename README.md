@@ -6,7 +6,7 @@ a mock payment provider with HMAC-signed webhooks, withdrawals settled through a
 reconciliation, JWT auth with per-user ownership, throttling, an audit trail, and full observability
 (JSON logs with request ids, Prometheus metrics, optional OpenTelemetry tracing, OpenAPI docs).
 
-**117 tests · 95% coverage** (app code, excluding tests and migrations) · **143 req/s, 0 failures, zero drift** under load
+**135 tests · 95% coverage** (app code, excluding tests and migrations) · **112 req/s, 0 failures, zero drift** under load (KYC enforced)
 (see [Load test](#load-test)).
 
 ## Features
@@ -141,6 +141,32 @@ The API credits the wallet that owns the account number (type `bank_transfer_in`
 unknown account, a currency mismatch or a tier-limit breach is accepted but **parked in suspense** (`inbound_unallocated`).
 Reconciliation reports it as an `unallocated_inbound` mismatch so ops can follow up.
 
+**Resolving suspense (staff only).** Every parked item gets exactly one decision. A repeat of the same decision returns
+the original result; a conflicting second decision returns `409 suspense_invalid_state`.
+
+| Endpoint / command | Effect |
+|---|---|
+| `GET /api/admin/suspense/` · `manage.py suspense list` | unresolved items: amount (minor units and formatted), reason, account number, sender |
+| `POST /api/admin/suspense/{txn}/allocate/` `{wallet_id, reason?, override_limits?}` · `manage.py suspense allocate <txn> --wallet <id> [--override-limits --reason ..] --actor <staff>` | posts suspense → wallet (`suspense_allocation`), same currency only |
+| `POST /api/admin/suspense/{txn}/return/` `{reason?}` · `manage.py suspense return <txn>` | mock refund to the sender: suspense → system_cash (`suspense_return`) |
+
+Both actions are audit-logged (`suspense.allocate` / `suspense.return`) and emit outbox events (`suspense.allocated` /
+`suspense.returned`). Once resolved, an item is no longer flagged and reconciliation goes back to **clean**.
+
+**KYC limits on allocation:** an allocation is a normal credit, so the target wallet's tier limits apply (for example,
+`422 limit_exceeded` if it would go over the tier-0 balance cap). Staff can pass **`override_limits: true`**, which
+requires a reason of at least 3 characters. The override skips only the KYC tier checks, never the balance or
+currency checks. It is recorded in the transaction metadata (`admin_override_limits`), on the resolution row, in the
+audit log and in the outbox event.
+
+**Holds and the daily limit:** placing a hold is checked against the daily outflow limit. The check counts posted
+outflow today, plus today's still-active holds, plus the new hold. Released or expired holds free the headroom, and
+capture is checked again when it posts.
+
+**Errors carry machine fields:** `limit_exceeded` and `insufficient_funds` bodies include formatted text, e.g.
+`"Daily outflow limit for tier 0 is ₦20,000.00 NGN (used ₦0.00 NGN, requested ₦25,000.00 NGN)"`. They also carry
+`amount_minor`, `currency`, `limit_minor`, `used_minor` / `balance_minor` / `available_minor`, `limit` and `tier`.
+
 ### Why tiered onboarding instead of manual approval of every signup
 
 - **No friction at signup.** Users who wait days for an admin before they can do anything mostly never come back. Tier 0
@@ -219,12 +245,12 @@ curl -s localhost:8000/api/wallets/1/ -H "Authorization: Bearer $TOKEN"
 ## Tests
 
 ```bash
-pytest                         # 117 tests, real PostgreSQL (uses config.settings_test: Celery eager)
+pytest                         # 135 tests, real PostgreSQL (config.settings_test: Celery eager, KYC enforced)
 pytest --cov                   # coverage (see .coveragerc)
 ruff check . && ruff format --check .
 ```
 
-Latest run: **117 passed in ~15s, 95% coverage** (1,590 statements, 82 missed).
+Latest run: **135 passed in ~18s, 95% coverage** (1,762 statements, 84 missed). All suites run with `KYC_ENFORCED=1`: ledger-mechanics tests use KYC-verified (tier-1) users from the `make_wallet` fixture.
 
 | File | Covers |
 |---|---|
@@ -242,17 +268,22 @@ and OpenAPI validation with `--fail-on-warn`. It uploads coverage.xml and openap
 ## Load test
 
 ```bash
-# terminal 1: server with throttles raised (KYC off: the load test seeds ₦500k per user, above the tier-0 cap)
-KYC_ENFORCED=0 CELERY_EAGER=1 THROTTLE_ANON=100000/min THROTTLE_USER=100000/min THROTTLE_MONEY=100000/min \
+# terminal 1: server with throttles raised (KYC stays on; seeded users are approved to tier 1)
+CELERY_EAGER=1 THROTTLE_ANON=100000/min THROTTLE_USER=100000/min THROTTLE_MONEY=100000/min \
   gunicorn config.wsgi:application -w 1 --threads 16 -b 127.0.0.1:8000
 # terminal 2
 make loadtest            # locust: 50 users, ramp 10/s, 60s, headless
 python manage.py reconcile   # must be "clean"
 ```
 
-Real run on 2026-10-24 (8-vCPU VM shared by Postgres, gunicorn and Locust): **8,569 requests, 0 failures, 143 req/s,
-p50 160 ms, p95 480 ms**. Transfers ran at ~65/s, with p50 320 ms and p95 530 ms. Afterwards, reconciliation was **clean**:
-50/50 charges matched, no balance drift, and NGN entries summed to 0 across 11,896 entries. See
+Real run on 2026-10-24 with **`KYC_ENFORCED=1`** (8-vCPU VM shared by Postgres, gunicorn and Locust): **6,716 requests,
+0 failures, 112 req/s, p50 240 ms, p95 630 ms**. Transfers ran at ~51/s, with p50 470 ms and p95 690 ms. Each seeded user
+submits KYC over the API and is approved to tier 1 through the service layer (`ledger.kyc.approve`). Because of that, the
+Locust process needs DB access (the same `POSTGRES_*` env as the server).
+
+Afterwards, reconciliation was **clean**: 50/50 charges matched, 0 unallocated inbound, no balance drift, NGN entries
+summed to 0 across 9,257 entries, and all 50 users were at tier 1 with a virtual account. The earlier run without KYC
+reached 143 req/s. The tier checks (a SUM over today's outflow, taken under the row lock) cost about 20%. See
 [`loadtest/results/SUMMARY.md`](loadtest/results/SUMMARY.md).
 
 ## Project layout
@@ -269,8 +300,8 @@ scripts/demo.py  end-to-end demo on a fresh DB
 ## Known limitations
 
 - KYC and bank accounts are mocks: there are no real BVN/NIN lookups or document uploads, and the virtual account numbers are fake.
-- Money parked in suspense (unknown virtual account) has no admin reallocation endpoint yet. It is only flagged by reconciliation.
-- Holds are checked against the daily outflow limit at capture, not when they are placed.
+- Returning money to the sender is a ledger-side mock (suspense → system_cash plus an `rf_…` reference). No outbound payment is sent to the provider.
+- A parked item is allocated in full to one wallet. Splitting it across wallets isn't supported.
 - FX rates are a fixed seeded table. A real system would snapshot live quotes and manage FX-desk P&L.
 - The provider is in-process (same DB) for convenience. It talks to the API only over HTTP webhooks.
 - Locmem is the default cache for throttles. Set `USE_REDIS_CACHE=1` (as docker-compose and fly.toml do) to share limits across processes.

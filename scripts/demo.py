@@ -370,6 +370,33 @@ def run():
         f"-> {m['kind']} {m['provider_ref']} {ngn(m['amount'])} reason={m['reason']}"
     )
 
+    h("8c. Admin allocates the parked money -> reconciliation CLEAN again")
+    items = ops.get("/api/admin/suspense/").json()
+    for it in items:
+        print(
+            f"suspense item txn #{it['transaction_id']}: {it['amount_display']} from {it['sender_name']!r} "
+            f"to {it['account_number']} ({it['reason']})"
+        )
+    it = items[0]
+    print("bob trying the suspense queue ->", bob.get("/api/admin/suspense/").status_code)
+    before = bal(bob, b_ngn)["balance"]
+    body = {"wallet_id": b_ngn, "reason": "sender confirmed it was meant for bob (typo in account number)"}
+    res = ops.post(f"/api/admin/suspense/{it['transaction_id']}/allocate/", body, idem=False, expect=200).json()
+    again = ops.post(f"/api/admin/suspense/{it['transaction_id']}/allocate/", body, idem=False, expect=200).json()
+    print(
+        f"ops allocates it to bob NGN #{b_ngn} -> txn #{res['transaction_id']} ({res['action']}, "
+        f"override_limits={res['override_limits']}); "
+        f"repeat -> same txn: {again['transaction_id'] == res['transaction_id']}"
+    )
+    print(
+        f"bob balance {ngn(before)} -> {ngn(bal(bob, b_ngn)['balance'])}; "
+        f"suspense queue now {ops.get('/api/admin/suspense/').json()}"
+    )
+    r = ops.post(f"/api/admin/suspense/{it['transaction_id']}/return/", idem=False)
+    print(f"trying to also return it to the sender -> {r.status_code} {r.json()['error']}")
+    rep = ops.post("/api/admin/reconciliation/", expect=201).json()
+    print(f"report #{rep['id']}: status={rep['status'].upper()} summary={json.dumps(rep['summary'])}")
+
     h("9. Every account + per-currency zero-sum check")
     from django.db.models import Sum
 

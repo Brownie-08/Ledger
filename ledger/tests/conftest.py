@@ -14,9 +14,28 @@ def _no_fees_by_default(settings):
 
 
 @pytest.fixture(autouse=True)
-def _kyc_off_by_default(settings):
-    """Pre-KYC suites exercise ledger mechanics with large balances; KYC tests opt in via ``kyc_on``."""
+def _kyc_enforced_by_default(settings):
+    """KYC limits are on for every suite, as in production. Ledger-mechanics suites use verified (tier-1)
+    users via ``make_wallet``/``verified``; tests that need limits off use the ``kyc_off`` fixture."""
+    settings.KYC_ENFORCED = True
+
+
+@pytest.fixture
+def kyc_off(settings):
     settings.KYC_ENFORCED = False
+
+
+def verify(user, tier=1):
+    """Mark a user KYC-approved at ``tier`` (test shortcut for the admin review flow)."""
+    from ledger.models import KYCProfile
+
+    KYCProfile.objects.update_or_create(user=user, defaults={"tier": tier, "status": KYCProfile.Status.APPROVED})
+    return user
+
+
+@pytest.fixture
+def verified(db):
+    return verify
 
 
 @pytest.fixture
@@ -37,8 +56,10 @@ def _relaxed_throttles(settings):
 
 @pytest.fixture
 def make_wallet(db):
-    def _make(username, currency="NGN", balance=0):
+    def _make(username, currency="NGN", balance=0, tier=1):
         user, _ = get_user_model().objects.get_or_create(username=username)
+        if tier is not None:
+            verify(user, tier)
         w = Account.objects.create(owner=user, currency=currency)
         if balance:
             services.deposit(w, balance, f"seed:{username}:{currency}")

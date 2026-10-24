@@ -13,7 +13,8 @@ from django.utils import timezone
 
 from . import virtual_accounts
 from .audit import audit
-from .models import Account, Entry, KYCProfile, OutboxEvent, Transaction
+from .models import Account, Entry, Hold, KYCProfile, OutboxEvent, Transaction
+from .money import fmt
 from .services import KycRequired, LedgerError, LimitExceeded
 
 # Transaction types that count as the wallet owner spending/sending money.
@@ -86,16 +87,56 @@ def enforce_tier_limits(accounts, deltas, txn_type):
             if cap and not rules[cap]:
                 raise KycRequired(f"Tier {tier} accounts cannot use {cap}; complete KYC")
             if txn_type in OUTFLOW_TYPES:
-                limit = rules["daily_outflow"][cur]
-                used = outflow_today(acc_id, cur)
-                if used - delta > limit:
-                    raise LimitExceeded(
-                        f"Daily outflow limit for tier {tier} is {limit} {cur} (used {used}, requested {-delta})"
-                    )
+                _check_daily(tier, acc_id, cur, -delta, outflow_today(acc_id, cur))
         elif delta > 0 and txn_type not in CAP_EXEMPT_CREDITS:
             limit = rules["max_balance"][cur]
             if acc.balance + delta > limit:
-                raise LimitExceeded(f"Max balance for tier {tier} is {limit} {cur} (balance {acc.balance})")
+                raise LimitExceeded(
+                    f"Max balance for tier {tier} is {fmt(limit, cur)}: balance {fmt(acc.balance, cur)} "
+                    f"+ {fmt(delta, cur)} would exceed it",
+                    limit="max_balance",
+                    tier=tier,
+                    account_id=acc_id,
+                    currency=cur,
+                    amount_minor=delta,
+                    limit_minor=limit,
+                    balance_minor=acc.balance,
+                )
+
+
+def _check_daily(tier, acc_id, cur, amount, used):
+    limit = tier_rules(tier)["daily_outflow"][cur]
+    if used + amount > limit:
+        raise LimitExceeded(
+            f"Daily outflow limit for tier {tier} is {fmt(limit, cur)} (used {fmt(used, cur)}, "
+            f"requested {fmt(amount, cur)})",
+            limit="daily_outflow",
+            tier=tier,
+            account_id=acc_id,
+            currency=cur,
+            amount_minor=amount,
+            limit_minor=limit,
+            used_minor=used,
+        )
+
+
+def active_holds_today(account_id):
+    start = timezone.make_aware(datetime.combine(timezone.localdate(), time.min))
+    return (
+        Hold.objects.filter(account_id=account_id, status=Hold.Status.ACTIVE, created_at__gte=start).aggregate(
+            s=Sum("amount")
+        )["s"]
+        or 0
+    )
+
+
+def enforce_hold_limits(acc, amount):
+    """Placing a hold reserves spend: posted outflow today + today's still-active holds + this hold must fit
+    the daily limit. (Capture is checked again in post_transaction, counting only posted outflow.)"""
+    if not enforced() or acc.type != Account.Type.USER_WALLET or not acc.owner_id:
+        return
+    tier = tier_of(acc.owner_id)
+    _check_daily(tier, acc.id, acc.currency, amount, outflow_today(acc.id, acc.currency) + active_holds_today(acc.id))
 
 
 def open_wallet(owner, currency):

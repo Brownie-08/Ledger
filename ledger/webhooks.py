@@ -51,9 +51,21 @@ def _bank_transfer_received(data):
     key = f"banktx:{data['provider_ref']}"
     va = VirtualAccount.objects.select_related("wallet").filter(account_number=data["account_number"]).first()
     if va is None:
-        return park_in_suspense(data, key, reason="unknown_account", account_number=data["account_number"])
+        return park_in_suspense(
+            data,
+            key,
+            reason="unknown_account",
+            account_number=data["account_number"],
+            sender_name=data.get("sender_name", ""),
+        )
     if va.currency != data["currency"]:
-        return park_in_suspense(data, key, reason="currency_mismatch", account_number=data["account_number"])
+        return park_in_suspense(
+            data,
+            key,
+            reason="currency_mismatch",
+            account_number=data["account_number"],
+            sender_name=data.get("sender_name", ""),
+        )
     cash = services.system_account(Account.Type.SYSTEM_CASH, va.currency)
     try:
         return services.post_transaction(

@@ -9,6 +9,7 @@ from django.utils import timezone
 from . import services
 from .audit import audit
 from .models import Account, Hold
+from .money import fmt
 from .services import EntrySpec, LedgerError
 
 
@@ -32,7 +33,18 @@ def place_hold(wallet, merchant, amount, idempotency_key, expires_in=timedelta(d
         if acc.currency != accs[merchant.id].currency:
             raise services.CurrencyMismatch("Hold and merchant currencies differ")
         if acc.available_balance < amount:
-            raise services.InsufficientFunds(f"Account {acc.id} has insufficient available funds")
+            raise services.InsufficientFunds(
+                f"Insufficient available funds: requested {fmt(amount, acc.currency)}, "
+                f"available {fmt(acc.available_balance, acc.currency)}",
+                account_id=acc.id,
+                amount_minor=amount,
+                available_minor=acc.available_balance,
+                currency=acc.currency,
+            )
+        # Tier-0 daily outflow also applies when reserving funds, not only at capture.
+        from .kyc import enforce_hold_limits
+
+        enforce_hold_limits(acc, amount)
         Account.objects.filter(id=acc.id).update(held_amount=F("held_amount") + amount, version=F("version") + 1)
         return Hold.objects.create(
             account=acc,

@@ -44,7 +44,9 @@ def unallocated_inbound():
             "reason": t.metadata.get("reason"),
             "account_number": t.metadata.get("account_number"),
         }
-        for t in Transaction.objects.filter(type="inbound_unallocated", status=Transaction.Status.POSTED)
+        for t in Transaction.objects.filter(
+            type="inbound_unallocated", status=Transaction.Status.POSTED, suspense_resolution__isnull=True
+        )
     ]
 
 

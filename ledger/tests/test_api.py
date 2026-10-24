@@ -5,10 +5,10 @@ pytestmark = pytest.mark.django_db
 
 
 @pytest.fixture
-def api(django_user_model):
-    """Core API tests run as an operator (staff) so they can seed via the back-office deposit endpoint."""
+def api(django_user_model, verified):
+    """Core API tests run as a KYC-verified operator (staff) so they can seed via the back-office deposit endpoint."""
     client = APIClient()
-    client.force_authenticate(django_user_model.objects.create_user("ops", password="x", is_staff=True))
+    client.force_authenticate(verified(django_user_model.objects.create_user("ops", password="x", is_staff=True)))
     return client
 
 
@@ -70,7 +70,8 @@ def test_overdraft_rejected(api):
     assert r.status_code == 422 and r.data["error"] == "insufficient_funds"
 
 
-def test_cross_currency_transfer_rejected(api):
+def test_cross_currency_transfer_rejected(api, django_user_model, verified):
+    verified(django_user_model.objects.create_user("b"))  # USD wallets need KYC tier 1
     a, b = make(api, "a", "NGN"), make(api, "b", "USD")
     post(api, f"/api/wallets/{a}/deposit/", {"amount": 100}, "d")
     r = post(api, "/api/transfers/", {"source_wallet": a, "destination_wallet": b, "amount": 50}, "t")

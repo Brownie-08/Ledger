@@ -5,14 +5,31 @@ Each simulated user registers, logs in (JWT), opens an NGN wallet, funds it thro
 
     locust -f loadtest/locustfile.py --headless -u 50 -r 10 -t 60s --host http://localhost:8000
 
+Seeding is KYC-compatible: each user submits KYC over the API and is then approved to tier 1 through the
+service layer (``ledger.kyc.approve``, the same code the admin endpoint runs), so the run works with
+``KYC_ENFORCED=1``. The locust process therefore needs DB access (same POSTGRES_* env as the server).
+
 Afterwards run `python manage.py reconcile` — status must be "clean" (no drift, every currency sums to 0).
 """
 
+import os
 import random
+import sys
 import threading
 import uuid
+from pathlib import Path
 
 from locust import HttpUser, between, task
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+import django  # noqa: E402
+
+django.setup()
+from django.contrib.auth import get_user_model  # noqa: E402
+from django.db import close_old_connections, connection  # noqa: E402
+
+from ledger import kyc  # noqa: E402
 
 WALLETS: list[int] = []
 _lock = threading.Lock()
@@ -20,6 +37,20 @@ _lock = threading.Lock()
 
 def key():
     return uuid.uuid4().hex
+
+
+KYC_DATA = {"full_name": "Load Tester", "date_of_birth": "1990-01-01", "country": "NG", "id_type": "NIN"}
+
+
+def approve_to_tier1(username):
+    """Admin approval via the service layer (audited, outbox event, virtual account backfill)."""
+    close_old_connections()
+    try:
+        reviewer, _ = get_user_model().objects.get_or_create(username="loadtest-ops", defaults={"is_staff": True})
+        user = get_user_model().objects.get(username=username)
+        kyc.approve(kyc.profile_for(user).pk, reviewer)
+    finally:
+        connection.close()
 
 
 class LedgerUser(HttpUser):
@@ -31,6 +62,10 @@ class LedgerUser(HttpUser):
         self.client.post("/api/auth/register/", json={"username": name, "password": pw}, name="auth/register")
         tok = self.client.post("/api/auth/token/", json={"username": name, "password": pw}, name="auth/token").json()
         self.client.headers["Authorization"] = f"Bearer {tok['access']}"
+        self.client.post(
+            "/api/kyc/", json={**KYC_DATA, "id_number": f"{random.randrange(10**10, 10**11)}"}, name="kyc [submit]"
+        )
+        approve_to_tier1(name)
         r = self.client.post(
             "/api/wallets/", json={"currency": "NGN"}, headers={"Idempotency-Key": key()}, name="wallets [create]"
         )

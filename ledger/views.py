@@ -12,7 +12,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from . import holds, kyc, services, signing, webhooks, withdrawals
+from . import holds, kyc, services, signing, suspense, webhooks, withdrawals
 from .audit import audit
 from .idempotency import idempotent
 from .metrics import WEBHOOKS
@@ -73,7 +73,7 @@ TXN_SCHEMA = inline_serializer(
 
 def ledger_error(exc):
     code = getattr(exc, "http_status", status.HTTP_422_UNPROCESSABLE_ENTITY)
-    return Response({"error": exc.code, "detail": str(exc)}, status=code)
+    return Response({"error": exc.code, "detail": str(exc), **getattr(exc, "fields", {})}, status=code)
 
 
 def txn_body(txn):
@@ -486,3 +486,90 @@ class KYCReject(APIView):
         except services.LedgerError as exc:
             return ledger_error(exc)
         return Response(KYCProfileSerializer(profile).data)
+
+
+SuspenseItemSerializer = inline_serializer(
+    "SuspenseItem",
+    {
+        "transaction_id": serializers.IntegerField(),
+        "provider_ref": serializers.CharField(),
+        "amount_minor": serializers.IntegerField(),
+        "currency": serializers.CharField(),
+        "amount_display": serializers.CharField(),
+        "reason": serializers.CharField(),
+        "account_number": serializers.CharField(allow_null=True),
+        "sender_name": serializers.CharField(),
+        "created_at": serializers.DateTimeField(),
+    },
+    many=True,
+)
+SuspenseResolutionSerializer = inline_serializer(
+    "SuspenseResolution",
+    {
+        "parked_transaction": serializers.IntegerField(),
+        "action": serializers.ChoiceField(choices=["allocate", "return"]),
+        "wallet_id": serializers.IntegerField(allow_null=True),
+        "transaction_id": serializers.IntegerField(),
+        "amount_minor": serializers.IntegerField(),
+        "override_limits": serializers.BooleanField(),
+        "reason": serializers.CharField(),
+        "actor": serializers.CharField(allow_null=True),
+        "created_at": serializers.DateTimeField(),
+    },
+)
+
+
+class SuspenseAllocateSerializer(serializers.Serializer):
+    wallet_id = serializers.IntegerField()
+    override_limits = serializers.BooleanField(default=False)
+    reason = serializers.CharField(max_length=255, required=False, allow_blank=True, default="")
+
+
+class SuspenseReturnSerializer(serializers.Serializer):
+    reason = serializers.CharField(max_length=255, required=False, allow_blank=True, default="")
+
+
+class SuspenseList(APIView):
+    """Unresolved inbound money parked in suspense (unknown account, currency mismatch, limit breach)."""
+
+    permission_classes = [IsStaff]
+
+    @extend_schema(responses=SuspenseItemSerializer)
+    def get(self, request):
+        return Response([suspense.item(t) for t in suspense.unresolved().prefetch_related("entries")])
+
+
+class SuspenseAllocate(APIView):
+    permission_classes = [IsStaff]
+
+    @extend_schema(request=SuspenseAllocateSerializer, responses=SuspenseResolutionSerializer)
+    def post(self, request, pk):
+        s = SuspenseAllocateSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+        wallet = get_object_or_404(Account, pk=s.validated_data["wallet_id"], type=Account.Type.USER_WALLET)
+        try:
+            res = suspense.allocate(
+                pk,
+                wallet,
+                request.user,
+                override_limits=s.validated_data["override_limits"],
+                reason=s.validated_data["reason"],
+                request=request,
+            )
+        except services.LedgerError as exc:
+            return ledger_error(exc)
+        return Response(suspense.resolution_body(res))
+
+
+class SuspenseReturn(APIView):
+    permission_classes = [IsStaff]
+
+    @extend_schema(request=SuspenseReturnSerializer, responses=SuspenseResolutionSerializer)
+    def post(self, request, pk):
+        s = SuspenseReturnSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+        try:
+            res = suspense.return_to_sender(pk, request.user, reason=s.validated_data["reason"], request=request)
+        except services.LedgerError as exc:
+            return ledger_error(exc)
+        return Response(suspense.resolution_body(res))
