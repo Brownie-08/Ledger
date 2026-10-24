@@ -19,6 +19,8 @@ services:
     environment:
       POSTGRES_HOST: db
       REDIS_URL: redis://redis:6379/0
+      USE_REDIS_CACHE: "1"
+      PROVIDER_WEBHOOK_URL: http://api:8000/api/webhooks/provider/
     ports: ["8000:8000"]
     depends_on:
       db: {condition: service_healthy}
@@ -26,6 +28,15 @@ services:
   worker:
     build: .
     command: celery -A config worker -l info
+    env_file: .env
+    environment:
+      POSTGRES_HOST: db
+      REDIS_URL: redis://redis:6379/0
+      PROVIDER_WEBHOOK_URL: http://api:8000/api/webhooks/provider/
+    depends_on: [db, redis]
+  beat:
+    build: .
+    command: celery -A config beat -l info --schedule /tmp/celerybeat-schedule
     env_file: .env
     environment:
       POSTGRES_HOST: db

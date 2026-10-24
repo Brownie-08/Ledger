@@ -1,10 +1,12 @@
+import logging
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
 from django.http import Http404
 from django.shortcuts import get_object_or_404
-from rest_framework import generics, status
+from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
+from rest_framework import generics, serializers, status
 from rest_framework.pagination import CursorPagination
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -13,6 +15,7 @@ from rest_framework.views import APIView
 from . import holds, services, signing, webhooks, withdrawals
 from .audit import audit
 from .idempotency import idempotent
+from .metrics import WEBHOOKS
 from .models import Account, AuditLog, Entry, FxRate, Hold, ReconciliationReport, Transaction, Withdrawal
 from .permissions import IsStaff, owns
 from .reconciliation import run_reconciliation
@@ -33,6 +36,35 @@ from .serializers import (
     WalletSerializer,
     WithdrawalCreateSerializer,
     WithdrawalSerializer,
+)
+
+log = logging.getLogger(__name__)
+
+
+IDEMPOTENCY_HEADER = OpenApiParameter(
+    "Idempotency-Key",
+    str,
+    OpenApiParameter.HEADER,
+    required=True,
+    description="Unique per logical operation. Replays return the original response with Idempotent-Replayed: true.",
+)
+TXN_SCHEMA = inline_serializer(
+    "PostedTransaction",
+    {
+        "transaction_id": serializers.IntegerField(),
+        "type": serializers.CharField(),
+        "status": serializers.CharField(),
+        "metadata": serializers.DictField(),
+        "entries": inline_serializer(
+            "PostedEntry",
+            {
+                "account_id": serializers.IntegerField(),
+                "amount": serializers.IntegerField(),
+                "currency": serializers.CharField(),
+            },
+            many=True,
+        ),
+    },
 )
 
 
@@ -73,6 +105,12 @@ class MoneyMixin:
 class Register(APIView):
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        request=RegisterSerializer,
+        responses=inline_serializer(
+            "RegisteredUser", {"id": serializers.IntegerField(), "username": serializers.CharField()}
+        ),
+    )
     def post(self, request):
         s = RegisterSerializer(data=request.data)
         s.is_valid(raise_exception=True)
@@ -81,12 +119,14 @@ class Register(APIView):
 
 
 class WalletListCreate(APIView):
+    @extend_schema(responses=WalletSerializer(many=True))
     def get(self, request):
         qs = Account.objects.filter(type=Account.Type.USER_WALLET).order_by("id")
         if not request.user.is_staff:
             qs = qs.filter(owner=request.user)
         return Response(WalletSerializer(qs, many=True).data)
 
+    @extend_schema(request=WalletCreateSerializer, responses=WalletSerializer, parameters=[IDEMPOTENCY_HEADER])
     @idempotent("wallet.create")
     def post(self, request):
         s = WalletCreateSerializer(data=request.data)
@@ -105,6 +145,7 @@ class WalletListCreate(APIView):
 
 
 class WalletDetail(APIView):
+    @extend_schema(responses=WalletSerializer)
     def get(self, request, pk):
         return Response(WalletSerializer(wallet_for(request, pk)).data)
 
@@ -114,6 +155,7 @@ class Deposit(MoneyMixin, APIView):
 
     permission_classes = [IsStaff]
 
+    @extend_schema(request=DepositSerializer, responses=TXN_SCHEMA, parameters=[IDEMPOTENCY_HEADER])
     @idempotent("wallet.deposit")
     def post(self, request, pk):
         wallet = get_object_or_404(Account, pk=pk, type=Account.Type.USER_WALLET)
@@ -130,6 +172,7 @@ class Deposit(MoneyMixin, APIView):
 
 
 class Transfer(MoneyMixin, APIView):
+    @extend_schema(request=TransferSerializer, responses=TXN_SCHEMA, parameters=[IDEMPOTENCY_HEADER])
     @idempotent("transfer")
     def post(self, request):
         s = TransferSerializer(data=request.data)
@@ -168,6 +211,13 @@ class ProviderWebhook(APIView):
     permission_classes = []
     throttle_classes = []
 
+    @extend_schema(
+        request=inline_serializer(
+            "ProviderEvent",
+            {"id": serializers.CharField(), "type": serializers.CharField(), "data": serializers.DictField()},
+        ),
+        responses=inline_serializer("WebhookResult", {"status": serializers.CharField()}),
+    )
     def post(self, request):
         from django.conf import settings
 
@@ -180,15 +230,19 @@ class ProviderWebhook(APIView):
                 settings.PROVIDER_WEBHOOK_TOLERANCE_SECONDS,
             )
         except signing.InvalidSignature as exc:
+            WEBHOOKS.labels("invalid_signature").inc()
+            log.warning("webhook rejected: bad signature", extra={"reason": str(exc)})
             return Response({"error": "invalid_signature", "detail": str(exc)}, status=400)
         try:
             result = webhooks.process_event(request.data)
         except webhooks.UnknownEvent:
             return Response({"error": "unknown_event"}, status=400)
+        WEBHOOKS.labels(result).inc()
         return Response({"status": result})
 
 
 class WithdrawalCreate(MoneyMixin, APIView):
+    @extend_schema(request=WithdrawalCreateSerializer, responses=WithdrawalSerializer, parameters=[IDEMPOTENCY_HEADER])
     @idempotent("wallet.withdraw")
     def post(self, request, pk):
         wallet = wallet_for(request, pk)
@@ -206,6 +260,7 @@ class WithdrawalCreate(MoneyMixin, APIView):
 
 
 class WithdrawalDetail(APIView):
+    @extend_schema(responses=WithdrawalSerializer)
     def get(self, request, pk):
         wd = get_object_or_404(Withdrawal.objects.select_related("wallet"), pk=pk)
         if not owns(request.user, wd.wallet):
@@ -222,6 +277,7 @@ def hold_for(request, pk, *, merchant_only):
 
 
 class HoldCreate(MoneyMixin, APIView):
+    @extend_schema(request=HoldCreateSerializer, responses=HoldSerializer, parameters=[IDEMPOTENCY_HEADER])
     @idempotent("hold.create")
     def post(self, request, pk):
         wallet = wallet_for(request, pk)
@@ -245,11 +301,13 @@ class HoldCreate(MoneyMixin, APIView):
 
 
 class HoldDetail(APIView):
+    @extend_schema(responses=HoldSerializer)
     def get(self, request, pk):
         return Response(HoldSerializer(hold_for(request, pk, merchant_only=False)).data)
 
 
 class HoldCapture(MoneyMixin, APIView):
+    @extend_schema(request=CaptureSerializer, responses=HoldSerializer, parameters=[IDEMPOTENCY_HEADER])
     @idempotent("hold.capture")
     def post(self, request, pk):
         hold = hold_for(request, pk, merchant_only=True)
@@ -266,6 +324,7 @@ class HoldCapture(MoneyMixin, APIView):
 
 
 class HoldRelease(MoneyMixin, APIView):
+    @extend_schema(request=None, responses=HoldSerializer, parameters=[IDEMPOTENCY_HEADER])
     @idempotent("hold.release")
     def post(self, request, pk):
         hold = hold_for(request, pk, merchant_only=True)
@@ -280,6 +339,7 @@ class HoldRelease(MoneyMixin, APIView):
 class RefundCreate(MoneyMixin, APIView):
     """Refund is issued by whoever received the money (payee/merchant), or staff."""
 
+    @extend_schema(request=RefundSerializer, responses=TXN_SCHEMA, parameters=[IDEMPOTENCY_HEADER])
     @idempotent("transaction.refund")
     def post(self, request, pk):
         original = get_object_or_404(Transaction, pk=pk)
@@ -304,6 +364,7 @@ class RefundCreate(MoneyMixin, APIView):
 class ReverseTransaction(MoneyMixin, APIView):
     permission_classes = [IsStaff]
 
+    @extend_schema(request=ReverseSerializer, responses=TXN_SCHEMA, parameters=[IDEMPOTENCY_HEADER])
     @idempotent("transaction.reverse")
     def post(self, request, pk):
         get_object_or_404(Transaction, pk=pk)
@@ -329,8 +390,10 @@ class ReconciliationListRun(generics.ListAPIView):
     pagination_class = HistoryPagination
     serializer_class = ReconciliationReportSerializer
 
+    @extend_schema(request=None, responses=ReconciliationReportSerializer)
     def post(self, request):
         report = run_reconciliation()
+        log.info("reconciliation run via API", extra={"report_id": report.id, "status": report.status})
         audit("reconciliation.run", request=request, obj=report, status=report.status)
         return Response(ReconciliationReportSerializer(report).data, status=201)
 

@@ -8,6 +8,7 @@ from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.db.models import F
 
+from .metrics import LEDGER_TRANSACTIONS
 from .models import Account, Entry, FxRate, OutboxEvent, Refund, Transaction
 
 
@@ -106,6 +107,7 @@ def post_transaction(entries, idempotency_key, *, type="generic", reference="", 
                     ],
                 },
             )
+            transaction.on_commit(lambda: LEDGER_TRANSACTIONS.labels(type).inc())
             return txn
     except IntegrityError:
         # Lost a race on the same idempotency key: return the winner.

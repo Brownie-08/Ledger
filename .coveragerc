@@ -1,0 +1,11 @@
+[run]
+source = ledger, provider, config
+omit =
+    */tests/*
+    */migrations/*
+    config/wsgi.py
+    config/asgi.py
+
+[report]
+show_missing = False
+skip_covered = False

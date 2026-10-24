@@ -13,11 +13,17 @@ INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.auth",
     "rest_framework",
+    "drf_spectacular",
     "ledger",
     "provider",
 ]
-MIDDLEWARE = ["django.middleware.common.CommonMiddleware"]
+MIDDLEWARE = [
+    "ledger.observability.RequestIDMiddleware",
+    "ledger.observability.MetricsMiddleware",
+    "django.middleware.common.CommonMiddleware",
+]
 ROOT_URLCONF = "config.urls"
+TEMPLATES = [{"BACKEND": "django.template.backends.django.DjangoTemplates", "APP_DIRS": True, "OPTIONS": {}}]
 WSGI_APPLICATION = "config.wsgi.application"
 
 DATABASES = {
@@ -38,6 +44,34 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework_simplejwt.authentication.JWTAuthentication"],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
     "DEFAULT_THROTTLE_CLASSES": ["ledger.throttling.AnonThrottle", "ledger.throttling.UserThrottle"],
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+}
+SPECTACULAR_SETTINGS = {
+    "TITLE": "Ledger Wallet API",
+    "DESCRIPTION": "Double-entry payments ledger: wallets, transfers, FX, holds, refunds, withdrawals, webhooks. "
+    "Amounts are integers in minor units. All money-moving POSTs require an Idempotency-Key header.",
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+    "SERVE_PERMISSIONS": ["rest_framework.permissions.AllowAny"],
+    "SERVE_AUTHENTICATION": [],
+    "COMPONENT_SPLIT_REQUEST": True,
+    "ENUM_NAME_OVERRIDES": {"CurrencyEnum": "ledger.models.Currency"},
+}
+
+LOG_FORMAT = os.environ.get("LOG_FORMAT", "json")
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "filters": {"request_id": {"()": "ledger.observability.RequestIdFilter"}},
+    "formatters": {
+        "json": {"()": "ledger.observability.JsonFormatter"},
+        "plain": {"format": "%(asctime)s %(levelname)s %(name)s [%(request_id)s] %(message)s"},
+    },
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": LOG_FORMAT, "filters": ["request_id"]},
+    },
+    "root": {"handlers": ["console"], "level": os.environ.get("LOG_LEVEL", "INFO")},
+    "loggers": {"django.request": {"level": "ERROR"}},  # 4xx are expected business outcomes; we log our own
 }
 LEDGER_THROTTLE_RATES = {
     "anon": os.environ.get("THROTTLE_ANON", "30/min"),

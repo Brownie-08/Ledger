@@ -7,6 +7,7 @@ from django.utils import timezone
 
 from provider.models import ProviderTransaction
 
+from .metrics import RECONCILIATION_MISMATCHES
 from .models import Account, Entry, ReconciliationReport, Transaction, Withdrawal
 
 
@@ -80,6 +81,7 @@ def run_reconciliation():
     counts = defaultdict(int)
     for m in mismatches:
         counts[m["kind"]] += 1
+        RECONCILIATION_MISMATCHES.labels(m["kind"]).inc()
     return ReconciliationReport.objects.create(
         status=ReconciliationReport.Status.MISMATCHES if mismatches else ReconciliationReport.Status.CLEAN,
         started_at=started,
