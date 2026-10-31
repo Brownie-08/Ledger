@@ -9,8 +9,9 @@ through a server-side proxy and reads and posts actual PostgreSQL transactions.
 
 Use Node.js 22.18 or newer (Node 25 was used locally).
 
-```powershell
-cd C:\Users\User\Projects\ledger-wallet-api\frontend
+```bash
+# from the repository root
+cd frontend
 npm ci
 npm run dev
 ```
@@ -59,7 +60,7 @@ API database; the playground and failure lab remain local simulations.
 
 ## Validation
 
-```powershell
+```bash
 npm run typecheck
 npm test
 npm run build

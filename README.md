@@ -1,40 +1,47 @@
 # Ledger Wallet API
 
-### Explore the demo
+A production-style **double-entry payments ledger and wallet API** built with Django, DRF and PostgreSQL.
+It is designed to move money correctly under retries, concurrency and partial failures: funds are never lost
+or double-counted, and every balance can be rebuilt from its ledger entries.
 
-The [Next.js playground](frontend/README.md) adds a multi-currency dashboard,
-guided transfer demo, and visual Ledger Explorer. Run `npm ci` and `npm run dev`
-inside `frontend/` to explore it without a database or login. The playground and
-failure lab use in-memory data; the **Live API** workspace signs in to Django and
-reads and posts real PostgreSQL ledger entries over mock payment rails.
-See the [runbook](docs/RUNBOOK.md), [validation evidence](docs/VERIFICATION.md),
-and [free hosting setup](docs/FREE-HOSTING.md) for setup and deployment.
+**Stack:** Python 3.13 · Django 5.2 · Django REST Framework · PostgreSQL · Celery (Redis locally, Vercel queues in production) · Next.js 16 · TypeScript
 
-**Live demo** (Vercel Hobby + Neon Free Postgres, deployed 31 October 2026):
+## Live demo
 
-- Playground UI: <https://ledger-wallet-ui-udohpeterbrown-1954s-projects.vercel.app/>
-- API health check: <https://ledger-wallet-api-udohpeterbrown-1954s-projects.vercel.app/healthz> (returns `{"ok": true}`)
+- **Web app:** <https://ledger-wallet-ui-udohpeterbrown-1954s-projects.vercel.app/>
+- **API health check:** <https://ledger-wallet-api-udohpeterbrown-1954s-projects.vercel.app/healthz>
 
-The mock payment provider (`/provider/…`, which can add free money) is **disabled in production**
-(`MOCK_PROVIDER_ENABLED` defaults to off when `DEBUG` is off). Background jobs run on Vercel's Celery
-queue integration, and a daily cron calls the secret-protected `/internal/maintenance/` sweep; see
-[free hosting](docs/FREE-HOSTING.md) for the trade-offs. The retained [Render Blueprint](render.yaml)
-uses paid resources and is not used.
+Hosted on Vercel Hobby with Neon Free PostgreSQL. The mock payment provider is disabled in production.
 
-Tests pass locally: **158 passed** against PostgreSQL, with **96% coverage of ledger/provider code**.
-The frontend has 10 tests of its own (Node 22.18+). The older load-test result below has not been
-re-measured during this upgrade.
+## Highlights
 
-A production-style **double-entry payments ledger and wallet API** built with Django + DRF + PostgreSQL + Celery.
-It covers multi-currency wallets, idempotent transfers with fees, FX, card-style holds, refunds and reversals,
-a mock payment provider with HMAC-signed webhooks, withdrawals settled through a suspense account, nightly
-reconciliation, JWT auth with per-user ownership, throttling, an audit trail, and full observability
-(JSON logs with request ids, Prometheus metrics, optional OpenTelemetry tracing, OpenAPI docs).
+- **Double-entry, append-only ledger.** Every transaction is a balanced set of entries in integer minor units. PostgreSQL triggers block updates and deletes, and a deferred constraint trigger checks each transaction sums to zero at commit.
+- **Safe retries.** `Idempotency-Key` on every money-moving POST, with a Postgres advisory lock so two identical requests arriving at once post only once.
+- **Deadlock-free concurrency.** Accounts are locked with `SELECT ... FOR UPDATE` in ascending id order; a test runs 100 concurrent transfers from 40 threads with no lost updates.
+- **Reliable integrations.** HMAC-signed, deduplicated provider webhooks, and payouts and webhook deliveries stored as durable dispatch jobs in Postgres so a broker outage cannot strand them.
+- **Tiered KYC and reconciliation.** Instant signup with low tier-0 limits, an admin review queue for tier 1, and a reconciliation job that checks provider records, cached balances and per-currency zero sums.
+- **Tested.** 158 tests pass locally against PostgreSQL, with 96% coverage of the ledger and provider code.
+- **Load tested.** A historical run (24 October 2026, KYC enforced) sustained 112 req/s with 0 failures and clean reconciliation afterwards (no balance drift).
 
-**158 tests passing locally · 96% ledger/provider coverage** (excluding tests and migrations) · Historical load result: **112 req/s, 0 failures, zero drift** (KYC enforced)
-(see [Load test](#load-test)).
+## Contents
+
+- [Features](#features)
+- [Architecture](#architecture)
+- [Design decisions](#design-decisions)
+- [API](#api)
+- [Onboarding & KYC (tiered)](#onboarding--kyc-tiered)
+- [Running it](#running-it)
+- [Tests](#tests)
+- [Load test](#load-test)
+- [Project layout](#project-layout)
+- [Known limitations](#known-limitations)
 
 ## Features
+
+The API covers multi-currency wallets, idempotent transfers with fees, FX, card-style holds, refunds and reversals,
+a mock payment provider with HMAC-signed webhooks, withdrawals settled through a suspense account, nightly
+reconciliation, JWT auth with per-user ownership, throttling, an audit trail, and observability
+(JSON logs with request ids, Prometheus metrics, optional OpenTelemetry tracing, OpenAPI docs).
 
 | Area | What's there |
 |---|---|
@@ -213,6 +220,19 @@ capture is checked again when it posts.
 
 ## Running it
 
+### Frontend (no backend needed)
+
+The [Next.js app](frontend/README.md) has a multi-currency dashboard, a guided transfer demo and a visual
+Ledger Explorer. The playground and failure lab (`/lab`) run on in-memory data, so they need no database or
+login. The Live API page (`/live`) signs in to Django through a server-side proxy and reads and posts real
+PostgreSQL ledger entries. Requires Node.js 22.18+.
+
+```bash
+cd frontend
+npm ci
+npm run dev
+```
+
 ### With Docker
 
 ```bash
@@ -274,7 +294,15 @@ curl -s localhost:8000/api/wallets/1/ -H "Authorization: Bearer $TOKEN"
 
 **Live deployment: Vercel Hobby + Neon Free.** [`vercel.json`](vercel.json) runs the Django API and the
 [`worker.py`](worker.py) Celery subscriber; the frontend is a second Vercel project rooted at `frontend/`.
-Steps and limits are in [free hosting](docs/FREE-HOSTING.md), and day-to-day operations in the [runbook](docs/RUNBOOK.md).
+The database is Neon Free PostgreSQL. Steps and limits are in [free hosting](docs/FREE-HOSTING.md),
+day-to-day operations in the [runbook](docs/RUNBOOK.md), and validation evidence in [verification](docs/VERIFICATION.md).
+
+- The mock payment provider (`/provider/…`, which can add test money) is disabled in production:
+  `MOCK_PROVIDER_ENABLED` defaults to off when `DEBUG` is off.
+- There is no always-on worker or beat. Background jobs run on Vercel's Celery queue integration, and a daily
+  cron calls the secret-protected `/internal/maintenance/` endpoint for dispatch recovery, hold expiry, the outbox
+  and reconciliation. Unpublished jobs and expired holds can therefore wait up to a day.
+- The [Render Blueprint](render.yaml) uses paid resources and is kept for reference only.
 
 **Fly.io (alternative, not deployed).** [`fly.toml`](fly.toml) defines app, worker and beat processes, a
 `release_command` for migrations, and a `/healthz` check. To deploy there, you'd run `fly launch --no-deploy`, attach Postgres and Redis, run `fly secrets set SECRET_KEY=… PROVIDER_WEBHOOK_SECRET=…`, then `fly deploy`.
