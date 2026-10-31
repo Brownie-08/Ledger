@@ -37,9 +37,6 @@ vercel_broker = os.environ.get("CELERY_BROKER_URL") == "vercel://"
 app = Celery(
     "ledger",
     task_cls=DjangoThreadTask if vercel_broker else None,
-    # The Vercel subscriber calls Celery from an event loop; its Django fixup
-    # closes ORM connections on that loop. DjangoThreadTask closes them instead.
-    fixups=[] if vercel_broker else None,
 )
 app.config_from_object("django.conf:settings", namespace="CELERY")
 app.autodiscover_tasks()
