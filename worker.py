@@ -9,6 +9,6 @@ django.setup()
 
 from config.celery import app  # noqa: E402
 
-app.autodiscover_tasks(force=True)
+app.autodiscover_tasks(["ledger", "provider"], force=True)
 
 __all__ = ["app"]
