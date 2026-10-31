@@ -9,13 +9,21 @@ failure lab use in-memory data; the **Live API** workspace signs in to Django an
 reads and posts real PostgreSQL ledger entries over mock payment rails.
 See the [runbook](docs/RUNBOOK.md), [validation evidence](docs/VERIFICATION.md),
 and [free hosting setup](docs/FREE-HOSTING.md) for setup and deployment.
-Publication is pending Vercel/Neon account connections and hosted verification.
-The retained [Render Blueprint](render.yaml) uses paid resources and is not approved.
 
-Latest local validation: **158 PostgreSQL-backed tests, 96% measured coverage
-of ledger/provider code, 10 frontend tests**, type checking, production build, and a separate Redis/Celery
-worker check. Published operational evidence records its exact scope; the older
-load-test result below has not been re-measured during this upgrade.
+**Live demo** (Vercel Hobby + Neon Free Postgres, deployed 31 October 2026):
+
+- Playground UI: <https://ledger-wallet-ui-udohpeterbrown-1954s-projects.vercel.app/>
+- API health check: <https://ledger-wallet-api-udohpeterbrown-1954s-projects.vercel.app/healthz> (returns `{"ok": true}`)
+
+The mock payment provider (`/provider/…`, which can add free money) is **disabled in production**
+(`MOCK_PROVIDER_ENABLED` defaults to off when `DEBUG` is off). Background jobs run on Vercel's Celery
+queue integration, and a daily cron calls the secret-protected `/internal/maintenance/` sweep; see
+[free hosting](docs/FREE-HOSTING.md) for the trade-offs. The retained [Render Blueprint](render.yaml)
+uses paid resources and is not used.
+
+Tests pass locally: **158 passed** against PostgreSQL, with **96% coverage of ledger/provider code**.
+The frontend has 10 tests of its own (Node 22.18+). The older load-test result below has not been
+re-measured during this upgrade.
 
 A production-style **double-entry payments ledger and wallet API** built with Django + DRF + PostgreSQL + Celery.
 It covers multi-currency wallets, idempotent transfers with fees, FX, card-style holds, refunds and reversals,
@@ -23,7 +31,7 @@ a mock payment provider with HMAC-signed webhooks, withdrawals settled through a
 reconciliation, JWT auth with per-user ownership, throttling, an audit trail, and full observability
 (JSON logs with request ids, Prometheus metrics, optional OpenTelemetry tracing, OpenAPI docs).
 
-**158 tests · 96% ledger/provider coverage** (excluding tests and migrations) · Historical load result: **112 req/s, 0 failures, zero drift** (KYC enforced)
+**158 tests passing locally · 96% ledger/provider coverage** (excluding tests and migrations) · Historical load result: **112 req/s, 0 failures, zero drift** (KYC enforced)
 (see [Load test](#load-test)).
 
 ## Features
@@ -43,7 +51,12 @@ reconciliation, JWT auth with per-user ownership, throttling, an audit trail, an
 | Throttling | Anon, user and a tighter **money** scope. Rates are read from settings or env at request time |
 | Audit | Append-only `AuditLog` for every money-moving action: actor, action, transaction, object, amount, **request id**, IP. System actions (webhooks, expiry) included |
 | Observability | JSON logs with `request_id` (and `trace_id` when tracing is on); `X-Request-ID` is accepted or generated and echoed; Prometheus `/metrics`; OpenTelemetry (off by default); `/healthz` |
-| Docs | OpenAPI 3 at `/api/schema/`, Swagger UI at `/api/docs/`, ReDoc at `/api/redoc/` (schema validates with zero warnings in CI) |
+| Transaction explorer | `GET /api/transactions/` and `/api/transactions/{id}/`: every transaction the user took part in, with both sides of each entry (counterparty wallets labelled, not named) and per-currency totals |
+| Durable dispatch | Payouts and webhook deliveries are first saved as `DispatchJob` rows in Postgres, then queued after commit. If the broker is down, the job stays in the database and a sweep re-sends it |
+| Safer retries | A Postgres advisory lock (`pg_advisory_xact_lock`) on the idempotency key serialises concurrent identical requests, so two arriving at the same moment can't both run |
+| Strict money input | Amounts must be JSON integers in minor units: `100.5`, `"100"` and `true` are rejected |
+| Production guards | With `DEBUG=0` the app refuses to start with a weak `SECRET_KEY`, a wildcard `ALLOWED_HOSTS`, or short provider/virtual-account secrets, and turns on HTTPS redirect, HSTS and secure cookies |
+| Docs | OpenAPI 3 at `/api/schema/`, Swagger UI at `/api/docs/`, ReDoc at `/api/redoc/` (schema validated with `--fail-on-warn`) |
 
 ## Architecture
 
@@ -117,9 +130,11 @@ The full schema is in [`openapi.yaml`](openapi.yaml), and Swagger UI is served a
 | GET, POST | `/api/admin/reconciliation/`, GET `/api/admin/reconciliation/{id}/` | **staff** |
 | GET | `/api/admin/audit-logs/?action=transfer` | **staff** |
 | GET | `/api/fx-rates/` | user |
+| GET | `/api/transactions/`, `/api/transactions/{id}/` (transaction explorer) | participant |
 | POST | `/api/webhooks/provider/` | provider (HMAC signature, no JWT) |
-| POST | `/provider/charges/` | mock provider's "hosted checkout" |
+| POST | `/provider/charges/` | mock provider's "hosted checkout" (local/dev only; disabled in production) |
 | GET | `/metrics`, `/healthz`, `/api/schema/`, `/api/docs/`, `/api/redoc/` | anyone |
+| GET | `/internal/maintenance/` (queues dispatch recovery, hold expiry, outbox, reconciliation) | cron (`Authorization: Bearer <CRON_SECRET>`) |
 
 Errors: `422 {"error": "insufficient_funds" | "currency_mismatch" | "not_refundable" | "hold_not_active" | …}`,
 `409 wallet_exists`, `400 invalid_signature`, `429` when throttled.
@@ -206,7 +221,9 @@ make up          # postgres, redis, api (gunicorn), worker, beat
 # API: http://localhost:8000/api/  ·  docs: http://localhost:8000/api/docs/
 ```
 
-### Locally (Python 3.12+ and PostgreSQL 16+)
+### Locally (Python 3.13 and PostgreSQL 16+)
+
+The backend needs Python 3.13 exactly (`pyproject.toml`: `>=3.13,<3.14`). The frontend needs Node.js 22.18+.
 
 ```bash
 python -m venv .venv && . .venv/bin/activate
@@ -229,7 +246,6 @@ It registers users, gets JWTs, opens wallets, deposits via a signed webhook (plu
 signature), then runs a transfer with a fee, an FX transfer, a hold with partial capture, a refund, a
 successful withdrawal and a failed one that gets reversed, and admin reconciliation. It finishes by printing
 every account with `balance == SUM(entries)` and each currency summing to 0.
-A sample run is in the project's `demo_output.txt`.
 
 ### Try it by hand
 
@@ -249,41 +265,56 @@ curl -s localhost:8000/api/wallets/1/ -H "Authorization: Bearer $TOKEN"
 ### Operations
 
 - `python manage.py reconcile`: runs reconciliation and prints the report as JSON.
-- Beat schedule: `expire_holds` every 60s, `publish_outbox` every 10s, `nightly_reconciliation` at 02:00 UTC.
+- Beat schedule (local/Docker): `publish_dispatches` and `publish_outbox` every 10s, `expire_holds` every 60s, `nightly_reconciliation` at 02:00 UTC. On Vercel these run from the daily `/internal/maintenance/` cron instead, so a stuck payout or expired hold can wait up to a day.
 - Logs: one JSON object per line (`LOG_FORMAT=plain` for humans). Send `X-Request-ID` to correlate; it is echoed back and stored on audit rows.
 - Metrics: `http_requests_total{method,route,status}`, `http_request_duration_seconds`, `ledger_transactions_posted_total{type}`, `webhook_events_total{result}`, `reconciliation_mismatches_total{kind}`. The registry is per process, so run gunicorn with **one worker + threads** (as in the Dockerfile) or switch to prometheus multiprocess mode.
 - Tracing: `OTEL_ENABLED=1` (and `OTEL_EXPORTER_OTLP_ENDPOINT=…`, or `OTEL_EXPORTER=console`) instruments Django and adds `trace_id` to logs.
 
-### Deploy (Fly.io)
+### Deploy
 
-[`fly.toml`](fly.toml) defines app, worker and beat processes, a `release_command` for migrations, and a `/healthz` check.
-**Not deployed.** To deploy, you'd run `fly launch --no-deploy`, attach Postgres and Redis, run `fly secrets set SECRET_KEY=… PROVIDER_WEBHOOK_SECRET=…`, then `fly deploy`.
+**Live deployment: Vercel Hobby + Neon Free.** [`vercel.json`](vercel.json) runs the Django API and the
+[`worker.py`](worker.py) Celery subscriber; the frontend is a second Vercel project rooted at `frontend/`.
+Steps and limits are in [free hosting](docs/FREE-HOSTING.md), and day-to-day operations in the [runbook](docs/RUNBOOK.md).
+
+**Fly.io (alternative, not deployed).** [`fly.toml`](fly.toml) defines app, worker and beat processes, a
+`release_command` for migrations, and a `/healthz` check. To deploy there, you'd run `fly launch --no-deploy`, attach Postgres and Redis, run `fly secrets set SECRET_KEY=… PROVIDER_WEBHOOK_SECRET=…`, then `fly deploy`.
 
 ## Tests
 
-Current results and acceptance scope are in [verification](docs/VERIFICATION.md).
-The suite breakdown below records the original 135-test baseline.
+Results and acceptance scope are in [verification](docs/VERIFICATION.md).
 
 ```bash
-pytest                         # 135 tests, real PostgreSQL (config.settings_test: Celery eager, KYC enforced)
-pytest --cov                   # coverage (see .coveragerc)
+pytest                                  # 158 tests, real PostgreSQL (config.settings_test: Celery eager, KYC enforced)
+pytest --cov=ledger --cov=provider      # coverage (see .coveragerc)
 ruff check . && ruff format --check .
+cd frontend && npm ci && npm test       # 10 frontend tests (Node 22.18+)
 ```
 
-Original baseline: **135 passed in ~18s, 95% coverage** (1,762 statements, 84 missed). All suites run with `KYC_ENFORCED=1`: ledger-mechanics tests use KYC-verified (tier-1) users from the `make_wallet` fixture.
+Tests pass locally: **158 passed, 96% coverage of ledger/provider code** (1,875 statements, 83 missed). All suites run with `KYC_ENFORCED=1`: ledger-mechanics tests use KYC-verified (tier-1) users from the `make_wallet` fixture.
 
 | File | Covers |
 |---|---|
 | `test_posting.py` (15) | balanced posting, zero-sum, append-only and DB triggers, reversal, idempotency, overdraft |
 | `test_api.py` (10) | wallet CRUD, idempotent replay / 422, overdraft, currency mismatch, cursor pagination |
 | `test_concurrency.py` (1) | 100 concurrent transfers from 40 threads: no lost updates, no deadlocks, balances = entries |
-| `test_week3_provider.py` (16) | signature valid / wrong secret / stale / malformed, event dedupe, provider-ref dedupe, deliver-webhook retries, payout outage → backoff retries, withdrawal success and failure reversal, suspense back to 0 |
+| `test_week3_provider.py` (18) | signature valid / wrong secret / stale / malformed, event dedupe, provider-ref dedupe, deliver-webhook retries, payout outage → backoff retries, withdrawal success and failure reversal, suspense back to 0 |
 | `test_week4.py` (24) | hold place / capture full and partial / release / expiry / idempotent capture, available balance, refunds (partial, cap, fee kept), fee math, FX conversion and per-currency zero-sum |
 | `test_week5.py` (16) | JWT register / token / refresh, ownership (404s), admin-only (403s), merchant-only capture, payee-only refund, user / money / anon throttles (429), audit trail incl. system actions, reconciliation clean and each mismatch type, admin endpoint, Celery task, management command |
 | `test_week6_observability.py` (7) | request ids (generated / accepted / sanitised), JSON log shape, request id on audit rows, `/metrics`, OpenAPI and Swagger, tracing off by default and emitting spans when enabled |
+| `test_kyc_virtual_accounts.py` (26) | tier limits, KYC submit / approve / reject, virtual account numbers, inbound bank transfers and suspense parking |
+| `test_suspense_errors_holds.py` (18) | suspense allocate / return / override, formatted error fields, holds against the daily limit |
+| `test_explorer_security.py` (12) | explorer scoping, counterparty redaction and pagination, invalid idempotency keys, concurrent identical retries post once, coerced/unsafe money rejected, opt-in demo seeding |
+| `test_maintenance.py` (7) | maintenance endpoint refuses missing/short/wrong secrets, queues work only after auth, reports broker failure without leaking details |
+| `test_dispatch.py` (2) | dispatch jobs survive a broker outage and are re-sent |
+| `test_production_settings.py` (2) | production deployment checks pass with a secure env; default credentials and wildcard hosts are refused |
+| **Total: 158** | |
 
-CI (GitHub Actions) runs against Postgres 16: ruff, `makemigrations --check`, migrate, pytest with coverage,
-and OpenAPI validation with `--fail-on-warn`. It uploads coverage.xml and openapi.yaml.
+Frontend: `frontend/tests/demo.test.ts` (8) and `scenarios.test.ts` (2), run with `npm test` on Node 22.18+.
+
+The CI workflows ([`ci.yml`](.github/workflows/ci.yml), [`frontend.yml`](.github/workflows/frontend.yml)) are set up to run
+ruff, migrations and `makemigrations --check`, pytest with coverage against Postgres 16, OpenAPI validation with
+`--fail-on-warn`, and a worker check. GitHub Actions runs are currently blocked by a GitHub account billing lock, so the
+jobs don't start there; the results above are from local runs.
 
 ## Load test
 
@@ -311,10 +342,21 @@ reached 143 req/s. The tier checks (a SUM over today's outflow, taken under the 
 ```
 config/          settings (+ settings_test), urls, celery, otel
 ledger/          models, services (posting, transfer, FX, fees, refunds), holds, withdrawals, webhooks,
-                 signing, reconciliation, audit, permissions, throttling, observability, metrics, views
+                 signing, reconciliation, audit, permissions, throttling, observability, metrics, views,
+                 kyc, virtual_accounts, suspense, idempotency
+  explorer.py    participant-scoped transaction explorer endpoints
+  dispatch.py    durable DispatchJob queue for payouts and webhook deliveries
+  maintenance.py secret-protected /internal/maintenance/ sweep (used by the Vercel cron)
 provider/        mock payment provider: charges, payouts, signed webhook delivery with retries
+frontend/        Next.js app: playground, failure lab (/lab), Live API page (/live),
+                 session route (app/api/session) and backend proxy route (app/api/backend)
+worker.py        Celery subscriber for Vercel queues (ledger + provider tasks)
+docs/            RUNBOOK, VERIFICATION, FREE-HOSTING, UPGRADE-PLAN, verification/*.json
 loadtest/        locustfile + results
-scripts/demo.py  end-to-end demo on a fresh DB
+scripts/         demo.py (end-to-end demo on a fresh DB), verify_live.py, verify_worker.py, wait_for_migrations.py
+vercel.json      Vercel config for the API and worker, plus the daily maintenance cron
+render.yaml      paid Render alternative, kept for reference only
+fly.toml         Fly.io alternative (not deployed)
 ```
 
 ## Known limitations
