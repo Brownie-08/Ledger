@@ -8,3 +8,6 @@ ALLOWED_HOSTS = [*ALLOWED_HOSTS, "testserver"]  # noqa: F405
 
 SECRET_KEY = "test-only-secret-key-that-is-long-enough-for-hs256"
 SIMPLE_JWT = {**SIMPLE_JWT, "SIGNING_KEY": SECRET_KEY}  # noqa: F405
+# Exercise authentication behavior without spending the suite's time on password
+# stretching. Production keeps Django's default PBKDF2 hasher.
+PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]

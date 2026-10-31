@@ -27,3 +27,34 @@ The historical load benchmark was not rerun for this upgrade.
 The unrelated `My Porfolio` repository is outside the implementation scope. Its
 baseline was clean at `24f9af13a228cf842519e4b49123cf9d498c9699`; verify it again
 before final handoff. A source/hash checkpoint was saved before full-upgrade edits.
+
+## Free hosting preparation — 30 October 2026
+
+Final explicit `config.settings_test` PostgreSQL regression: **158 passed in
+96.02 seconds**. Measured coverage for `ledger` and `provider` is **96% rounded**
+(1,875 statements, 83 missed); this scope differs from the earlier whole-app
+coverage run above. Production-settings subprocess checks still load the real
+production settings. Existing frontend and real Redis-worker evidence above
+was not rerun for these backend/deployment-only changes.
+
+Vercel Hobby and Neon Free replace the declined paid Render plan. No paid
+resources were created. `vercel.json` matches Vercel's current published schema;
+the Python project declares pinned runtime dependencies and a private Celery
+subscriber. Nine focused maintenance/production-security tests pass, including
+missing/wrong secrets, non-ASCII input and broker failure without credential
+disclosure. Ruff checks and formatting pass. Neon TLS option parsing and Celery
+task discovery pass a local smoke check without connecting to hosted resources.
+Tests use a fast password hasher only in `config.settings_test`; production
+retains Django's default password stretching. See `FREE-HOSTING.md` for the
+daily maintenance tradeoff and release instructions.
+
+The initial GitHub runs did **not start**: both report that the owner's account
+is locked due to a billing issue. These are infrastructure failures, not passing
+or failing application tests:
+
+- [Backend/full-stack run](https://github.com/Brownie-08/Ledger/actions/runs/40961720590)
+- [Frontend run](https://github.com/Brownie-08/Ledger/actions/runs/40961720566)
+
+Vercel/Neon account connections, platform builds, hosted Celery retry/deduplication
+and live URL verification are pending. Local Redis results remain evidence for
+the Redis configuration only. No Vercel queue acceptance is claimed.

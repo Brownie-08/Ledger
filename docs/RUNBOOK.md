@@ -45,7 +45,13 @@ the complete HTTP flow in eager mode. It refuses to overwrite an existing DB.
 It does not establish real-worker acceptance; use `scripts/verify_worker.py` for
 that, with `CELERY_EAGER=0` and a database ending in `_verification`.
 
-## Render deployment
+## Free deployment (current target)
+
+The owner selected zero-cost hosting. Follow [Vercel + Neon](FREE-HOSTING.md).
+Account connections and hosted queue acceptance are pending. The free hosted
+maintenance sweep runs daily; the local worker/beat frequencies above remain.
+
+## Render deployment (paid alternative, not approved)
 
 `render.yaml` creates only resources named `ledger-wallet-*` in Oregon, using
 `https://github.com/Brownie-08/Ledger` on `main`. It does not reuse the separate

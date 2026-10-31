@@ -1,0 +1,10 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "django",
+  "regions": ["iad1"],
+  "functions": {
+    "config/wsgi.py": {"maxDuration": 60},
+    "worker.py": {"maxDuration": 300}
+  },
+  "crons": [{"path": "/internal/maintenance/", "schedule": "0 2 * * *"}]
+}

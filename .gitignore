@@ -16,3 +16,6 @@ frontend/tsconfig.tsbuildinfo
 .local/
 frontend/.env.local
 frontend/.env.production.local
+.vercel/
+.env.local
+dump.rdb

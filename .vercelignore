@@ -1,0 +1,15 @@
+.local
+.venv
+.git
+checkpoints
+frontend
+ledger/tests
+loadtest
+docs
+.env*
+dump.rdb
+coverage.xml
+.coverage
+.pytest_cache
+.ruff_cache
+__pycache__

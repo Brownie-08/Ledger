@@ -105,7 +105,14 @@ if os.environ.get("DATABASE_URL"):
             "PASSWORD": unquote(db_url.password or ""),
             "HOST": db_url.hostname,
             "PORT": db_url.port or 5432,
-            "OPTIONS": {"sslmode": parse_qs(db_url.query).get("sslmode", ["prefer"])[0]},
+            "OPTIONS": {
+                "sslmode": parse_qs(db_url.query).get("sslmode", ["prefer"])[0],
+                **{
+                    key: values[0]
+                    for key, values in parse_qs(db_url.query).items()
+                    if key in {"channel_binding", "sslrootcert", "connect_timeout"}
+                },
+            },
         }
     )
 DATABASES["default"]["CONN_MAX_AGE"] = int(os.environ.get("DB_CONN_MAX_AGE", "0"))
@@ -165,7 +172,7 @@ if os.environ.get("REDIS_URL") and os.environ.get("USE_REDIS_CACHE", "0") == "1"
         "default": {"BACKEND": "django.core.cache.backends.redis.RedisCache", "LOCATION": os.environ["REDIS_URL"]}
     }
 
-CELERY_BROKER_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL") or os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 CELERY_TASK_DEFAULT_QUEUE = os.environ.get("CELERY_QUEUE", "celery")
 CELERY_BROKER_CONNECTION_TIMEOUT = 3
 CELERY_TASK_ALWAYS_EAGER = os.environ.get("CELERY_EAGER", "0") == "1"
@@ -176,6 +183,12 @@ CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_TASK_PUBLISH_RETRY = False
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_BROKER_TRANSPORT_OPTIONS = {"visibility_timeout": 3600}
+if CELERY_BROKER_URL == "vercel://":
+    CELERY_BROKER_TRANSPORT_OPTIONS = {"lease_duration": 300, "requeue_delay_seconds": 10}
+    # Business state is durable in PostgreSQL; no ephemeral result backend needed.
+    CELERY_TASK_IGNORE_RESULT = True
+
+CRON_SECRET = os.environ.get("CRON_SECRET", "")
 
 # --- Mock payment provider (week 3) ---
 PROVIDER_WEBHOOK_SECRET = os.environ.get("PROVIDER_WEBHOOK_SECRET", "whsec_dev_secret")

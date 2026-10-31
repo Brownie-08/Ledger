@@ -8,10 +8,12 @@ inside `frontend/` to explore it without a database or login. The playground and
 failure lab use in-memory data; the **Live API** workspace signs in to Django and
 reads and posts real PostgreSQL ledger entries over mock payment rails.
 See the [runbook](docs/RUNBOOK.md), [validation evidence](docs/VERIFICATION.md),
-and [Render Blueprint](render.yaml) for setup and deployment.
+and [free hosting setup](docs/FREE-HOSTING.md) for setup and deployment.
+Publication is pending Vercel/Neon account connections and hosted verification.
+The retained [Render Blueprint](render.yaml) uses paid resources and is not approved.
 
-Latest local validation: **151 PostgreSQL-backed tests, 95% measured coverage,
-10 frontend tests**, type checking, production build, and a separate Redis/Celery
+Latest local validation: **158 PostgreSQL-backed tests, 96% measured coverage
+of ledger/provider code, 10 frontend tests**, type checking, production build, and a separate Redis/Celery
 worker check. Published operational evidence records its exact scope; the older
 load-test result below has not been re-measured during this upgrade.
 
@@ -21,7 +23,7 @@ a mock payment provider with HMAC-signed webhooks, withdrawals settled through a
 reconciliation, JWT auth with per-user ownership, throttling, an audit trail, and full observability
 (JSON logs with request ids, Prometheus metrics, optional OpenTelemetry tracing, OpenAPI docs).
 
-**151 tests · 95% coverage** (app code, excluding tests and migrations) · Historical load result: **112 req/s, 0 failures, zero drift** (KYC enforced)
+**158 tests · 96% ledger/provider coverage** (excluding tests and migrations) · Historical load result: **112 req/s, 0 failures, zero drift** (KYC enforced)
 (see [Load test](#load-test)).
 
 ## Features
@@ -259,13 +261,16 @@ curl -s localhost:8000/api/wallets/1/ -H "Authorization: Bearer $TOKEN"
 
 ## Tests
 
+Current results and acceptance scope are in [verification](docs/VERIFICATION.md).
+The suite breakdown below records the original 135-test baseline.
+
 ```bash
 pytest                         # 135 tests, real PostgreSQL (config.settings_test: Celery eager, KYC enforced)
 pytest --cov                   # coverage (see .coveragerc)
 ruff check . && ruff format --check .
 ```
 
-Latest run: **135 passed in ~18s, 95% coverage** (1,762 statements, 84 missed). All suites run with `KYC_ENFORCED=1`: ledger-mechanics tests use KYC-verified (tier-1) users from the `make_wallet` fixture.
+Original baseline: **135 passed in ~18s, 95% coverage** (1,762 statements, 84 missed). All suites run with `KYC_ENFORCED=1`: ledger-mechanics tests use KYC-verified (tier-1) users from the `make_wallet` fixture.
 
 | File | Covers |
 |---|---|

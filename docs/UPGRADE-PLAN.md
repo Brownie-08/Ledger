@@ -21,8 +21,8 @@ All implementation commands target this standalone Ledger project.
    strict minor-unit parsing, production settings and durable task dispatch.
 6. Verification and operations: full PostgreSQL suite, real Redis/Celery worker,
    full-stack HTTP checks, CI, OpenAPI and deployment/runbook documentation.
-7. Render publication: push the finished source, validate remote CI, review the
-   paid resource total with the owner, deploy and check the live workload.
+7. Free publication: use Vercel Hobby and Neon Free, validate remote CI and
+   platform queue behavior, deploy and check the live workload.
 
 Validate each phase before proceeding. The frontend simulator is educational;
 its tests do not establish PostgreSQL concurrency, durability, webhook delivery
@@ -59,3 +59,11 @@ and logout. See `docs/VERIFICATION.md` for acceptance boundaries.
 `render.yaml` passes current schema validation. Publication is the remaining
 phase and requires the owner's approval for the recurring worker/database cost.
 No existing portfolio hosting resources are repurposed.
+
+## Free hosting decision — 30 October 2026
+
+The owner declined recurring Render costs. No paid resources were created.
+Vercel Hobby plus Neon Free is the new deployment target. Queue-triggered
+Celery functions preserve asynchronous processing; a daily authenticated cron
+replaces continuously running beat. See `FREE-HOSTING.md` for limits, account
+connections, deployment steps and the hosted acceptance still required.
