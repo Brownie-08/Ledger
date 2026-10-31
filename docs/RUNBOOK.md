@@ -45,10 +45,12 @@ the complete HTTP flow in eager mode. It refuses to overwrite an existing DB.
 It does not establish real-worker acceptance; use `scripts/verify_worker.py` for
 that, with `CELERY_EAGER=0` and a database ending in `_verification`.
 
-## Free deployment (current target)
+## Free deployment (live)
 
-The owner selected zero-cost hosting. Follow [Vercel + Neon](FREE-HOSTING.md).
-Account connections and hosted queue acceptance are pending. The free hosted
+The owner selected zero-cost hosting. The public playground is
+<https://ledger-wallet-ui-udohpeterbrown-1954s-projects.vercel.app/>. Follow
+[Vercel + Neon](FREE-HOSTING.md) for configuration and limits and
+[verification](VERIFICATION.md) for the hosted checks. The free hosted
 maintenance sweep runs daily; the local worker/beat frequencies above remain.
 
 ## Render deployment (paid alternative, not approved)

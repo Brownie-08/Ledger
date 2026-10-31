@@ -1,14 +1,17 @@
 # Free portfolio hosting
 
-Prepared 30 October 2026. Deployment is pending account connections and live
-verification. No paid Render resources were created. Do not apply `render.yaml`:
-it is a paid alternative retained for reference.
+Deployed 31 October 2026 on Vercel Hobby and Neon Free. No paid Render resources
+were created. Do not apply `render.yaml`: it is a paid alternative retained for
+reference. The public playground is at
+<https://ledger-wallet-ui-udohpeterbrown-1954s-projects.vercel.app/> and the
+API health check is at
+<https://ledger-wallet-api-udohpeterbrown-1954s-projects.vercel.app/healthz>.
 
 ## Architecture and limits
 
 Use **Vercel Hobby** for two projects from `Brownie-08/Ledger`: a Django API at
 the repository root and a Next.js frontend with root directory `frontend`.
-Use a new, isolated **Neon Free** PostgreSQL project in US East.
+The isolated **Neon Free** PostgreSQL project `ledger` is in AWS Europe (London).
 
 The API uses Vercel's Celery adapter and private queue-triggered functions.
 It keeps real asynchronous processing; there is no Redis service or always-on
@@ -16,10 +19,12 @@ worker to pay for. `worker.py` discovers both ledger and mock-provider tasks.
 Posted money, dispatch intent and delivery state remain durable in PostgreSQL.
 Celery task results are ignored; application state is the source of truth.
 
-This relies on Vercel's beta Celery/Queues integration and must be verified on
-the host before calling it accepted. Local Redis acceptance does not establish
-Vercel queue acceptance. Retries use short countdowns relative to the worker's
-300-second maximum invocation; deliveries can repeat and handlers deduplicate.
+This relies on Vercel's beta Celery/Queues integration. Hosted maintenance,
+failed and successful payouts, signed webhook delivery and duplicate replay
+were verified on 31 October 2026; see `VERIFICATION.md`. Hosted transient
+retry behavior was not deliberately exercised. Retries use short countdowns
+relative to the worker's 300-second maximum invocation; deliveries can repeat
+and handlers deduplicate.
 
 Normal withdrawals and provider events enqueue immediately. Hobby's daily cron
 calls the secret-protected `/internal/maintenance/` endpoint, which queues
@@ -90,4 +95,4 @@ Sources checked on the date above:
    Confirm maintenance denies missing/wrong credentials and queues all four tasks
    with the correct credential. Inspect host logs without publishing secrets.
 7. Record actual URLs, commit, platform build results, queue results and remaining
-   limits in `VERIFICATION.md`. Do not claim deployment from configuration alone.
+   limits in `VERIFICATION.md` after each release.

@@ -55,6 +55,42 @@ or failing application tests:
 - [Backend/full-stack run](https://github.com/Brownie-08/Ledger/actions/runs/40961720590)
 - [Frontend run](https://github.com/Brownie-08/Ledger/actions/runs/40961720566)
 
-Vercel/Neon account connections, platform builds, hosted Celery retry/deduplication
-and live URL verification are pending. Local Redis results remain evidence for
-the Redis configuration only. No Vercel queue acceptance is claimed.
+## Live free deployment — 31 October 2026
+
+Both Vercel Hobby production projects built successfully from
+`7402edc8ea934702725f0c8d86aac378c25fd37c`:
+
+| Service | Public URL | Live result |
+| --- | --- | --- |
+| Next.js playground | <https://ledger-wallet-ui-udohpeterbrown-1954s-projects.vercel.app/> | `/`, `/live` and `/lab` returned HTTP 200 |
+| Django API | <https://ledger-wallet-api-udohpeterbrown-1954s-projects.vercel.app/healthz> | HTTP 200 and `{"ok": true}` |
+| Neon Free | Project `autumn-lab-63519765`, AWS Europe (London) | 29 migrations and two synthetic users; no pre-existing tables or user data were changed |
+
+The hosted Next.js session proxy returned HTTP 200 for `demo_alex`, set HTTP-only
+access and refresh cookies, and returned three wallets. The full
+`scripts/verify_live.py` HTTP check passed against the hosted frontend: a real
+NGN-to-USD transfer posted balanced entries (transaction #7), replay returned
+the same transaction, a changed request returned 422, a cross-origin post 403,
+an unlisted admin proxy route 404, refresh 200, and logout left wallets at 401.
+The public playground and failure lab remain in-memory simulations.
+
+The protected maintenance endpoint rejected an unauthenticated call with 401
+and accepted an authenticated call with 200. Vercel's current subscriber then
+completed all four maintenance tasks. Neon reconciliation report #1 was clean.
+The hosted queue subsequently processed synthetic failed and successful payouts:
+withdrawal #1 failed and reversed its hold, withdrawal #2 posted and settled,
+and the NGN wallet's net change was exactly -500 minor units. Both signed
+provider events were delivered once. Replaying the successful webhook twice
+returned `duplicate` each time and created zero additional transactions.
+Reconciliation report #2, after the payouts, was clean with zero mismatches.
+
+`anyio==4.15.1` was added after the first Vercel worker failed to import it.
+The final worker runs synchronous Django task bodies in a separate thread and
+explicitly discovers `ledger` and `provider` tasks. A local async-context smoke
+check confirmed the task thread and preservation of Celery request ID/retries;
+Ruff and formatting checks passed for the worker files. Hosted transient retry
+after a deliberately failed callback was not exercised; the earlier real-Redis
+retry test remains separate evidence. On Hobby, unfinished dispatch recovery and
+hold expiry run through the daily maintenance cron, so recovery may wait until
+the next sweep. The GitHub Actions billing lock noted above still prevents CI
+from starting; platform builds and live checks are separate evidence.
