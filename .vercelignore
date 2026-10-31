@@ -2,7 +2,6 @@
 .venv
 .git
 checkpoints
-frontend
 ledger/tests
 loadtest
 docs
