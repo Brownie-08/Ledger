@@ -1,12 +1,27 @@
 # Ledger Wallet API
 
+### Explore the demo
+
+The [Next.js playground](frontend/README.md) adds a multi-currency dashboard,
+guided transfer demo, and visual Ledger Explorer. Run `npm ci` and `npm run dev`
+inside `frontend/` to explore it without a database or login. The playground and
+failure lab use in-memory data; the **Live API** workspace signs in to Django and
+reads and posts real PostgreSQL ledger entries over mock payment rails.
+See the [runbook](docs/RUNBOOK.md), [validation evidence](docs/VERIFICATION.md),
+and [Render Blueprint](render.yaml) for setup and deployment.
+
+Latest local validation: **151 PostgreSQL-backed tests, 95% measured coverage,
+10 frontend tests**, type checking, production build, and a separate Redis/Celery
+worker check. Published operational evidence records its exact scope; the older
+load-test result below has not been re-measured during this upgrade.
+
 A production-style **double-entry payments ledger and wallet API** built with Django + DRF + PostgreSQL + Celery.
 It covers multi-currency wallets, idempotent transfers with fees, FX, card-style holds, refunds and reversals,
 a mock payment provider with HMAC-signed webhooks, withdrawals settled through a suspense account, nightly
 reconciliation, JWT auth with per-user ownership, throttling, an audit trail, and full observability
 (JSON logs with request ids, Prometheus metrics, optional OpenTelemetry tracing, OpenAPI docs).
 
-**135 tests · 95% coverage** (app code, excluding tests and migrations) · **112 req/s, 0 failures, zero drift** under load (KYC enforced)
+**151 tests · 95% coverage** (app code, excluding tests and migrations) · Historical load result: **112 req/s, 0 failures, zero drift** (KYC enforced)
 (see [Load test](#load-test)).
 
 ## Features

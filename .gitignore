@@ -9,3 +9,10 @@ coverage.xml
 htmlcov/
 loadtest/results/*.html
 staticfiles/
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/tsconfig.tsbuildinfo
+.local/
+frontend/.env.local
+frontend/.env.production.local

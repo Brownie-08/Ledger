@@ -486,6 +486,53 @@ paths:
               schema:
                 $ref: '#/components/schemas/KYCProfile'
           description: ''
+  /api/transactions/:
+    get:
+      operationId: api_transactions_list
+      parameters:
+      - name: cursor
+        required: false
+        in: query
+        description: The pagination cursor value.
+        schema:
+          type: string
+      - name: page_size
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      tags:
+      - api
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedExplorerList'
+          description: ''
+  /api/transactions/{id}/:
+    get:
+      operationId: api_transactions_retrieve
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - api
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Explorer'
+          description: ''
   /api/transactions/{id}/refund/:
     post:
       operationId: api_transactions_refund_create
@@ -977,7 +1024,9 @@ components:
           maxLength: 17
         amount:
           type: integer
+          maximum: 9007199254740991
           minimum: 1
+          format: int64
         currency:
           $ref: '#/components/schemas/CurrencyEnum'
         sender_name:
@@ -995,7 +1044,9 @@ components:
       properties:
         amount:
           type: integer
+          maximum: 9007199254740991
           minimum: 1
+          format: int64
     ChargeRequest:
       type: object
       properties:
@@ -1003,7 +1054,9 @@ components:
           type: integer
         amount:
           type: integer
+          maximum: 9007199254740991
           minimum: 1
+          format: int64
         currency:
           $ref: '#/components/schemas/CurrencyEnum'
         client_reference:
@@ -1028,7 +1081,9 @@ components:
       properties:
         amount:
           type: integer
+          maximum: 9007199254740991
           minimum: 1
+          format: int64
         reference:
           type: string
           default: ''
@@ -1068,6 +1123,65 @@ components:
       - transaction
       - transaction_status
       - transaction_type
+    Explorer:
+      type: object
+      properties:
+        transaction_id:
+          type: integer
+        type:
+          type: string
+          maxLength: 30
+        status:
+          $ref: '#/components/schemas/ExplorerStatusEnum'
+        reference:
+          type: string
+          maxLength: 255
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExplorerEntry'
+          readOnly: true
+        totals:
+          type: object
+          additionalProperties:
+            type: integer
+          readOnly: true
+      required:
+      - created_at
+      - entries
+      - totals
+      - transaction_id
+      - type
+    ExplorerEntry:
+      type: object
+      properties:
+        account_id:
+          type: integer
+        amount:
+          type: integer
+        currency:
+          type: string
+        label:
+          type: string
+      required:
+      - account_id
+      - amount
+      - currency
+      - label
+    ExplorerStatusEnum:
+      enum:
+      - pending
+      - posted
+      - reversed
+      type: string
+      description: |-
+        * `pending` - Pending
+        * `posted` - Posted
+        * `reversed` - Reversed
     FxRate:
       type: object
       properties:
@@ -1140,7 +1254,9 @@ components:
           type: integer
         amount:
           type: integer
+          maximum: 9007199254740991
           minimum: 1
+          format: int64
         expires_in_seconds:
           type: integer
           maximum: 2592000
@@ -1334,6 +1450,25 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Entry'
+    PaginatedExplorerList:
+      type: object
+      required:
+      - results
+      properties:
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?cursor=cD00ODY%3D"
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?cursor=cj0xJnA9NDg3
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Explorer'
     PaginatedKYCProfileList:
       type: object
       required:
@@ -1492,7 +1627,9 @@ components:
       properties:
         amount:
           type: integer
+          maximum: 9007199254740991
           minimum: 1
+          format: int64
         reason:
           type: string
           default: ''
@@ -1678,7 +1815,9 @@ components:
           type: integer
         amount:
           type: integer
+          maximum: 9007199254740991
           minimum: 1
+          format: int64
         reference:
           type: string
           default: ''
@@ -1861,7 +2000,9 @@ components:
       properties:
         amount:
           type: integer
+          maximum: 9007199254740991
           minimum: 1
+          format: int64
         bank_account:
           type: string
           minLength: 1

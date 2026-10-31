@@ -8,7 +8,7 @@ from .services import EntrySpec
 
 
 def create_withdrawal(wallet, amount, bank_account, idempotency_key):
-    from .tasks import submit_payout
+    from .dispatch import enqueue
 
     suspense = services.system_account(Account.Type.SUSPENSE, wallet.currency)
     with transaction.atomic():
@@ -23,7 +23,7 @@ def create_withdrawal(wallet, amount, bank_account, idempotency_key):
             defaults={"wallet": wallet, "amount": amount, "currency": wallet.currency, "bank_account": bank_account},
         )
         if created:
-            transaction.on_commit(lambda: submit_payout.delay(wd.id))
+            enqueue("payout", wd.id)
     return wd
 
 

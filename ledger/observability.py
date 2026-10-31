@@ -6,7 +6,7 @@ import re
 import time
 import uuid
 
-from django.db import connection
+from django.db import DatabaseError, connection
 from django.http import HttpResponse, JsonResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
@@ -55,8 +55,11 @@ def metrics_view(request):
 
 
 def healthz(request):
-    with connection.cursor() as cur:
-        cur.execute("SELECT 1")
+    try:
+        with connection.cursor() as cur:
+            cur.execute("SELECT 1")
+    except DatabaseError:
+        return JsonResponse({"ok": False}, status=503)
     return JsonResponse({"ok": True})
 
 

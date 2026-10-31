@@ -295,3 +295,18 @@ class SuspenseResolution(models.Model):
     reason = models.CharField(max_length=255, blank=True)
     override_limits = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+class DispatchJob(models.Model):
+    """Durable intent for an at-least-once Celery submission, committed with its business row."""
+
+    kind = models.CharField(max_length=20, choices=[("payout", "Payout"), ("webhook", "Webhook")])
+    object_id = models.PositiveBigIntegerField()
+    attempts = models.PositiveIntegerField(default=0)
+    published_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.CharField(max_length=100, blank=True, default="")
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["kind", "object_id"], name="one_dispatch_per_object")]

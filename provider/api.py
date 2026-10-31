@@ -30,14 +30,14 @@ def _maybe_fail():
 
 
 def _emit(event_type, data):
-    from .tasks import deliver_webhook
+    from ledger.dispatch import enqueue
 
     ev = ProviderEvent.objects.create(
         event_id=f"evt_{uuid.uuid4().hex[:20]}", type=event_type, payload={"type": event_type, "data": data}
     )
     ev.payload["id"] = ev.event_id
     ev.save(update_fields=["payload"])
-    transaction.on_commit(lambda: deliver_webhook.delay(ev.id))
+    enqueue("webhook", ev.id)
     return ev
 
 

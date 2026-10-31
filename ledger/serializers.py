@@ -6,6 +6,18 @@ from rest_framework import serializers
 from .models import Account, Currency, Entry, FxRate, Hold, KYCProfile, VirtualAccount, Withdrawal
 
 
+class MinorAmountField(serializers.IntegerField):
+    """JSON money must be an integer, never a coerced float, boolean or decimal string."""
+
+    def __init__(self, **kwargs):
+        super().__init__(min_value=1, max_value=9_007_199_254_740_991, **kwargs)
+
+    def to_internal_value(self, data):
+        if not isinstance(data, int) or isinstance(data, bool):
+            raise serializers.ValidationError("Amounts must be JSON integers in minor units")
+        return super().to_internal_value(data)
+
+
 class VirtualAccountSerializer(serializers.ModelSerializer):
     mock = serializers.SerializerMethodField()
 
@@ -138,14 +150,14 @@ class RegisterSerializer(serializers.Serializer):
 
 
 class DepositSerializer(serializers.Serializer):
-    amount = serializers.IntegerField(min_value=1)
+    amount = MinorAmountField()
     reference = serializers.CharField(required=False, default="", allow_blank=True)
 
 
 class TransferSerializer(serializers.Serializer):
     source_wallet = serializers.IntegerField()
     destination_wallet = serializers.IntegerField()
-    amount = serializers.IntegerField(min_value=1)
+    amount = MinorAmountField()
     reference = serializers.CharField(required=False, default="", allow_blank=True)
 
 
@@ -169,7 +181,7 @@ class EntrySerializer(serializers.ModelSerializer):
 
 
 class WithdrawalCreateSerializer(serializers.Serializer):
-    amount = serializers.IntegerField(min_value=1)
+    amount = MinorAmountField()
     bank_account = serializers.RegexField(r"^[0-9]{6,34}$")
 
 
@@ -194,13 +206,13 @@ class WithdrawalSerializer(serializers.ModelSerializer):
 
 class HoldCreateSerializer(serializers.Serializer):
     merchant_wallet = serializers.IntegerField()
-    amount = serializers.IntegerField(min_value=1)
+    amount = MinorAmountField()
     expires_in_seconds = serializers.IntegerField(min_value=1, max_value=30 * 86400, default=7 * 86400)
     reference = serializers.CharField(required=False, default="", allow_blank=True)
 
 
 class CaptureSerializer(serializers.Serializer):
-    amount = serializers.IntegerField(min_value=1, required=False)
+    amount = MinorAmountField(required=False)
 
 
 class HoldSerializer(serializers.ModelSerializer):
@@ -222,7 +234,7 @@ class HoldSerializer(serializers.ModelSerializer):
 
 
 class RefundSerializer(serializers.Serializer):
-    amount = serializers.IntegerField(min_value=1)
+    amount = MinorAmountField()
     reason = serializers.CharField(required=False, default="", allow_blank=True)
 
 

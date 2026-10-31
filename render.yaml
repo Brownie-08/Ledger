@@ -1,0 +1,101 @@
+# Full synthetic portfolio stack. Review recurring costs before applying.
+services:
+  - type: web
+    name: ledger-wallet-api
+    runtime: python
+    region: oregon
+    plan: free
+    repo: https://github.com/Brownie-08/Ledger
+    branch: main
+    autoDeployTrigger: checksPass
+    buildCommand: pip install -r requirements-runtime.txt && python manage.py collectstatic --noinput
+    startCommand: python scripts/wait_for_migrations.py && gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --workers 1 --threads 4 --access-logfile -
+    healthCheckPath: /healthz
+    envVars:
+      - fromGroup: ledger-wallet-config
+      - key: DATABASE_URL
+        fromDatabase: { name: ledger-wallet-db, property: connectionString }
+      - key: REDIS_URL
+        fromService: { type: keyvalue, name: ledger-wallet-queue, property: connectionString }
+  - type: web
+    name: ledger-wallet-ui
+    runtime: node
+    region: oregon
+    plan: free
+    repo: https://github.com/Brownie-08/Ledger
+    branch: main
+    rootDir: frontend
+    autoDeployTrigger: checksPass
+    buildCommand: npm ci && npm run build
+    startCommand: node node_modules/next/dist/bin/next start --hostname 0.0.0.0 --port $PORT
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: NEXT_TELEMETRY_DISABLED
+        value: "1"
+      - key: SESSION_COOKIE_SECURE
+        value: "1"
+      - key: API_BASE_URL
+        fromService: { type: web, name: ledger-wallet-api, envVarKey: RENDER_EXTERNAL_URL }
+  - type: worker
+    name: ledger-wallet-worker
+    runtime: python
+    region: oregon
+    plan: 0.5c-512mb
+    repo: https://github.com/Brownie-08/Ledger
+    branch: main
+    autoDeployTrigger: checksPass
+    buildCommand: pip install -r requirements-runtime.txt
+    preDeployCommand: python manage.py migrate --noinput && python manage.py seed_demo
+    startCommand: celery -A config worker --beat --concurrency=1 --schedule /tmp/ledger-celerybeat -l info
+    envVars:
+      - fromGroup: ledger-wallet-config
+      - key: DATABASE_URL
+        fromDatabase: { name: ledger-wallet-db, property: connectionString }
+      - key: REDIS_URL
+        fromService: { type: keyvalue, name: ledger-wallet-queue, property: connectionString }
+      - key: DEMO_SEED_ENABLED
+        value: "1"
+      - key: DEMO_PASSWORD
+        generateValue: true
+      - key: PROVIDER_WEBHOOK_BASE_URL
+        fromService: { type: web, name: ledger-wallet-api, envVarKey: RENDER_EXTERNAL_URL }
+  - type: keyvalue
+    name: ledger-wallet-queue
+    region: oregon
+    plan: free
+    maxmemoryPolicy: noeviction
+    ipAllowList: []
+databases:
+  - name: ledger-wallet-db
+    region: oregon
+    plan: 0.1c-256mb
+    diskSizeGB: 1
+    databaseName: ledger_wallet
+    user: ledger_wallet
+    postgresMajorVersion: "16"
+    ipAllowList: []
+envVarGroups:
+  - name: ledger-wallet-config
+    envVars:
+      - key: DEBUG
+        value: "0"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: PROVIDER_WEBHOOK_SECRET
+        generateValue: true
+      - key: VIRTUAL_ACCOUNT_SECRET
+        generateValue: true
+      - key: ALLOWED_HOSTS
+        value: localhost,127.0.0.1
+      - key: USE_REDIS_CACHE
+        value: "1"
+      - key: TRUST_PROXY
+        value: "1"
+      - key: MOCK_PROVIDER_ENABLED
+        value: "0"
+      - key: PYTHON_VERSION
+        value: "3.13.18"
+      - key: KYC_ENFORCED
+        value: "1"

@@ -1,4 +1,5 @@
 import json
+import random
 
 import requests
 from celery import shared_task
@@ -34,7 +35,7 @@ def deliver_webhook(self, event_pk):
     except (requests.RequestException, DeliveryFailed) as exc:
         ev.last_error = str(exc)
         ev.save(update_fields=["attempts", "last_error"])
-        raise self.retry(exc=exc)
+        raise self.retry(exc=exc, countdown=random.uniform(0, min(600, 2**self.request.retries)))
     ev.delivered_at = timezone.now()
     ev.save(update_fields=["attempts", "delivered_at"])
     return "delivered"

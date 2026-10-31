@@ -5,14 +5,25 @@ services:
       POSTGRES_DB: ledger
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-    ports: ["5432:5432"]
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: ["ledger_pg:/var/lib/postgresql/data"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 3s
       retries: 20
   redis:
     image: redis:7
-    ports: ["6379:6379"]
+    command: redis-server --appendonly yes --maxmemory-policy noeviction
+    volumes: ["ledger_redis:/data"]
+    ports: ["127.0.0.1:6379:6379"]
+  migrate:
+    build: .
+    env_file: .env
+    command: python manage.py migrate --noinput
+    environment:
+      POSTGRES_HOST: db
+    depends_on:
+      db: {condition: service_healthy}
   api:
     build: .
     env_file: .env
@@ -21,19 +32,31 @@ services:
       REDIS_URL: redis://redis:6379/0
       USE_REDIS_CACHE: "1"
       PROVIDER_WEBHOOK_URL: http://api:8000/api/webhooks/provider/
-    ports: ["8000:8000"]
+    ports: ["127.0.0.1:8000:8000"]
     depends_on:
       db: {condition: service_healthy}
       redis: {condition: service_started}
+      migrate: {condition: service_completed_successfully}
+  frontend:
+    build: ./frontend
+    environment:
+      API_BASE_URL: http://api:8000
+      ALLOW_INTERNAL_HTTP: "1"
+      PUBLIC_APP_URL: http://127.0.0.1:3000
+      SESSION_COOKIE_SECURE: "0"
+    ports: ["127.0.0.1:3000:3000"]
+    depends_on: [api]
   worker:
     build: .
-    command: celery -A config worker -l info
+    command: celery -A config worker -l info --concurrency=2
     env_file: .env
     environment:
       POSTGRES_HOST: db
       REDIS_URL: redis://redis:6379/0
       PROVIDER_WEBHOOK_URL: http://api:8000/api/webhooks/provider/
-    depends_on: [db, redis]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_started}
   beat:
     build: .
     command: celery -A config beat -l info --schedule /tmp/celerybeat-schedule
@@ -41,4 +64,9 @@ services:
     environment:
       POSTGRES_HOST: db
       REDIS_URL: redis://redis:6379/0
-    depends_on: [db, redis]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_started}
+volumes:
+  ledger_pg:
+  ledger_redis:

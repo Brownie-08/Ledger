@@ -23,10 +23,10 @@ import psycopg
 import requests
 
 ROOT = Path(__file__).resolve().parent.parent
-DB = os.environ.get("DEMO_DB", "ledger_demo")
+DB = os.environ.get("DEMO_DB", f"ledger_demo_{uuid.uuid4().hex[:8]}")
 PORT = int(os.environ.get("DEMO_PORT", "8200"))
 BASE = f"http://127.0.0.1:{PORT}"
-SECRET = "whsec_demo_secret"
+SECRET = uuid.uuid4().hex + uuid.uuid4().hex
 ENV = {
     **os.environ,
     "POSTGRES_DB": DB,
@@ -38,7 +38,11 @@ ENV = {
     "PROVIDER_WEBHOOK_URL": f"{BASE}/api/webhooks/provider/",
     "TRANSFER_FEE_BPS": "50",
     "THROTTLE_ANON": "1000/min",
-    "SECRET_KEY": "demo-only-secret-key-that-is-long-enough-for-hs256",
+    "SECRET_KEY": uuid.uuid4().hex + uuid.uuid4().hex,
+    "VIRTUAL_ACCOUNT_SECRET": uuid.uuid4().hex,
+    "SECURE_SSL_REDIRECT": "0",
+    "MOCK_PROVIDER_ENABLED": "1",
+    "ALLOWED_HOSTS": "127.0.0.1,localhost",
 }
 PY = sys.executable
 
@@ -80,8 +84,11 @@ def fresh_db():
         autocommit=True,
     )
     with psycopg.connect(**conninfo) as c:
-        c.execute(f'DROP DATABASE IF EXISTS "{DB}" WITH (FORCE)')
-        c.execute(f'CREATE DATABASE "{DB}"')
+        from psycopg import sql
+
+        if c.execute("SELECT 1 FROM pg_database WHERE datname=%s", [DB]).fetchone():
+            raise SystemExit("Demo database already exists; choose a new DEMO_DB. Existing data is never reset.")
+        c.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(DB)))
     subprocess.run([PY, "manage.py", "migrate", "-v0"], cwd=ROOT, env=ENV, check=True)
     code = (
         "from django.contrib.auth import get_user_model as g;"
@@ -91,12 +98,14 @@ def fresh_db():
 
 
 def start_server():
+    (ROOT / ".local").mkdir(exist_ok=True)
     proc = subprocess.Popen(
-        [PY, "-m", "gunicorn", "config.wsgi:application", "-b", f"127.0.0.1:{PORT}", "-w", "1", "--threads", "8"],
+        [PY, "manage.py", "runserver", f"127.0.0.1:{PORT}", "--noreload"],
         cwd=ROOT,
         env=ENV,
         stdout=subprocess.DEVNULL,
-        stderr=open("/tmp/demo_server.log", "w"),
+        stderr=open(ROOT / ".local" / "demo_server.log", "w"),
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
     )
     for _ in range(50):
         try:
@@ -105,7 +114,7 @@ def start_server():
         except requests.ConnectionError:
             time.sleep(0.2)
     proc.kill()
-    raise SystemExit("server did not start; see /tmp/demo_server.log")
+    raise SystemExit("server did not start; see .local/demo_server.log")
 
 
 def login(name, password):
@@ -122,11 +131,13 @@ def bal(api, wid):
 
 
 def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     h("0. Fresh database + server")
     fresh_db()
     print(f"created database {DB!r}, applied all migrations, created staff user 'ops'")
     server = start_server()
-    print(f"gunicorn up at {BASE} (Celery eager: webhooks/payouts run inline)")
+    print(f"local demo server up at {BASE} (Celery eager: webhooks/payouts run inline)")
     try:
         run()
     finally:
@@ -140,7 +151,7 @@ def run():
     bob, _ = login("bob", "bob-demo-pass")
     shop, _ = login("shop", "shop-demo-pass")
     ops, _ = login("ops", "ops-demo-pass")
-    print(f"ada/bob/shop registered; ada's access token: {tok['access'][:24]}… (refresh issued too)")
+    print("ada/bob/shop registered; access and refresh tokens issued (values omitted)")
     print("unauthenticated GET /api/wallets/ ->", requests.get(f"{BASE}/api/wallets/").status_code)
 
     h("2a. Onboarding: instant signup at KYC tier 0")

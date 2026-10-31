@@ -1,0 +1,15 @@
+{
+  "login": "HTTP-only cookies, no tokens in JSON",
+  "database_fx_posting": 7,
+  "currency_totals": {
+    "NGN": 0,
+    "USD": 0
+  },
+  "replay": 201,
+  "changed_body": 422,
+  "cross_origin_post": 403,
+  "forbidden_proxy_route": 404,
+  "refresh": 200,
+  "logout_then_wallets": 401,
+  "security_headers": "present"
+}

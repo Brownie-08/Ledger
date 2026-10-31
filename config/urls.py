@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.contrib import admin
 from django.urls import include, path
 from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
@@ -10,7 +11,8 @@ urlpatterns = [
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="docs"),
     path("api/redoc/", SpectacularRedocView.as_view(url_name="schema"), name="redoc"),
     path("api/", include("ledger.urls")),
-    path("provider/", include("provider.urls")),
     path("metrics", metrics_view),
     path("healthz", healthz),
 ]
+if settings.MOCK_PROVIDER_ENABLED:
+    urlpatterns.append(path("provider/", include("provider.urls")))

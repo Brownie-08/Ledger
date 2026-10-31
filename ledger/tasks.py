@@ -1,4 +1,5 @@
 import logging
+import random
 
 from celery import shared_task
 from django.db import transaction
@@ -7,6 +8,13 @@ from django.utils import timezone
 from .models import OutboxEvent, Withdrawal
 
 log = logging.getLogger(__name__)
+
+
+@shared_task
+def publish_dispatches():
+    from .dispatch import dispatch_due
+
+    return dispatch_due()
 
 
 @shared_task
@@ -42,7 +50,7 @@ def submit_payout(self, withdrawal_id):
         )
     except provider_api.ProviderUnavailable as exc:
         log.warning("provider unavailable, retrying", extra={"withdrawal_id": wd.id, "retry": self.request.retries})
-        raise self.retry(exc=exc)
+        raise self.retry(exc=exc, countdown=random.uniform(0, min(300, 2**self.request.retries)))
 
 
 @shared_task

@@ -4,13 +4,14 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from ledger.models import Currency
+from ledger.serializers import MinorAmountField
 
 from . import api
 
 
 class ChargeSerializer(serializers.Serializer):
     wallet_id = serializers.IntegerField()
-    amount = serializers.IntegerField(min_value=1)
+    amount = MinorAmountField()
     currency = serializers.ChoiceField(choices=Currency.choices)
     client_reference = serializers.CharField(required=False)
 
@@ -48,7 +49,7 @@ class SimulatedCheckout(APIView):
 
 class BankTransferSerializer(serializers.Serializer):
     account_number = serializers.CharField(max_length=17)
-    amount = serializers.IntegerField(min_value=1)
+    amount = MinorAmountField()
     currency = serializers.ChoiceField(choices=Currency.choices)
     sender_name = serializers.CharField(required=False, default="", allow_blank=True)
     client_reference = serializers.CharField(required=False)

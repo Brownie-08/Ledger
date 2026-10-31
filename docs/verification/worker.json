@@ -1,0 +1,15 @@
+{
+  "broker": "real Redis",
+  "worker": "separate Celery solo process",
+  "eager": false,
+  "initial_webhook_http": [
+    503,
+    200
+  ],
+  "webhook_attempts": 2,
+  "duplicate_event_deliveries": 2,
+  "failed_withdrawal": "failed",
+  "successful_withdrawal": "posted",
+  "final_balance_minor": 12500,
+  "reconciliation": "clean"
+}

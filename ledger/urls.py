@@ -2,8 +2,11 @@ from django.urls import path
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from . import views
+from .explorer import TransactionDetail, TransactionList
 
 urlpatterns = [
+    path("transactions/", TransactionList.as_view()),
+    path("transactions/<int:pk>/", TransactionDetail.as_view()),
     path("auth/register/", views.Register.as_view()),
     path("auth/token/", TokenObtainPairView.as_view()),
     path("auth/token/refresh/", TokenRefreshView.as_view()),

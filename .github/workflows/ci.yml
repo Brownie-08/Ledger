@@ -1,5 +1,7 @@
 name: CI
 on: [push, pull_request]
+permissions:
+  contents: read
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -7,21 +9,36 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_DB: ledger
+          POSTGRES_DB: ledger_verification
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
         ports: ["5432:5432"]
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 5s --health-retries 10
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: --health-cmd "redis-cli ping" --health-interval 3s --health-retries 10
     env:
       POSTGRES_HOST: localhost
       POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ledger_verification
       SECRET_KEY: ci-only-secret-key-that-is-long-enough-for-hs256
+      REDIS_URL: redis://localhost:6379/15
+      CELERY_EAGER: "0"
+      CELERY_QUEUE: ledger_verification
+      DEMO_SEED_ENABLED: "1"
+      DEMO_PASSWORD: ci-only-synthetic-wallet-password
+      API_BASE_URL: http://127.0.0.1:8000
+      PUBLIC_APP_URL: http://127.0.0.1:3000
+      SESSION_COOKIE_SECURE: "0"
+      NEXT_TELEMETRY_DISABLED: "1"
+      PYTHONIOENCODING: utf-8
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.13"
           cache: pip
       - run: pip install -r requirements.txt
       - run: ruff check . && ruff format --check .
@@ -29,9 +46,29 @@ jobs:
       - run: python manage.py makemigrations --check --dry-run
       - run: pytest -v --cov --cov-report=term --cov-report=xml
       - run: python manage.py spectacular --file openapi.yaml --validate --fail-on-warn
+      - run: python scripts/verify_worker.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --prefix frontend
+      - run: npm run build --prefix frontend
+      - name: Verify connected frontend and session security
+        run: |
+          python manage.py seed_demo
+          python manage.py runserver 127.0.0.1:8000 --noreload > .local/live-api.log 2>&1 &
+          npm start --prefix frontend -- --port 3000 > .local/live-ui.log 2>&1 &
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3000/ > /dev/null && curl -fsS http://127.0.0.1:8000/healthz > /dev/null; then break; fi
+            sleep 1
+          done
+          python scripts/verify_live.py
       - uses: actions/upload-artifact@v4
         with:
           name: coverage-and-schema
           path: |
             coverage.xml
             openapi.yaml
+            .local/worker-verification.json
+            .local/live-verification.json
